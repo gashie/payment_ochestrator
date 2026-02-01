@@ -1,0 +1,175 @@
+{
+  "baseUrl": "http://localhost:3002/api/v1",
+
+  "nec": {
+    "description": "NEC (Name Enquiry Check) - Synchronous call to verify account",
+    "endpoint": "POST /test/nec",
+    "payloads": {
+      "minimal": {},
+      "basic": {
+        "destAccountNumber": "0246089019",
+        "destBankCode": "300315"
+      },
+      "full": {
+        "sessionId": "260201120000001",
+        "trackingNumber": "NEC20260201001",
+        "srcBankCode": "300300",
+        "destBankCode": "300315",
+        "srcAccountNumber": "0246089019",
+        "destAccountNumber": "0246089019",
+        "channelCode": "100",
+        "narration": "Name Enquiry Test"
+      }
+    },
+    "curlExamples": {
+      "minimal": "curl -X POST http://localhost:3002/api/v1/test/nec -H \"Content-Type: application/json\" -d \"{}\"",
+      "withAccount": "curl -X POST http://localhost:3002/api/v1/test/nec -H \"Content-Type: application/json\" -d \"{\\\"destAccountNumber\\\": \\\"0246089019\\\", \\\"destBankCode\\\": \\\"300315\\\"}\""
+    },
+    "expectedResponse": {
+      "success": true,
+      "data": {
+        "status": "COMPLETED",
+        "result": {
+          "actionCode": "000",
+          "approvalCode": "206901",
+          "nameToCredit": "ENOCH DANSO CLINTON",
+          "accountToCredit": "0246089019",
+          "functionCode": "230"
+        }
+      }
+    }
+  },
+
+  "ft": {
+    "description": "FT (Funds Transfer) - Asynchronous call, returns immediately",
+    "endpoint": "POST /test/ft",
+    "payloads": {
+      "minimal": {
+        "amount": 100
+      },
+      "basic": {
+        "srcAccountNumber": "0011010104334",
+        "destAccountNumber": "0246436671",
+        "amount": 500
+      },
+      "full": {
+        "sessionId": "260201130000001",
+        "trackingNumber": "FT20260201001",
+        "srcBankCode": "300307",
+        "destBankCode": "300591",
+        "srcAccountNumber": "0011010104334",
+        "srcAccountName": "FAUTINA ABDULAI",
+        "destAccountNumber": "0246436671",
+        "destAccountName": "KWAKU MANU",
+        "amount": 1000,
+        "channelCode": "100",
+        "narration": "Test Transfer Payment"
+      }
+    },
+    "curlExamples": {
+      "minimal": "curl -X POST http://localhost:3002/api/v1/test/ft -H \"Content-Type: application/json\" -d \"{\\\"amount\\\": 100}\"",
+      "full": "curl -X POST http://localhost:3002/api/v1/test/ft -H \"Content-Type: application/json\" -d \"{\\\"srcAccountNumber\\\": \\\"0011010104334\\\", \\\"destAccountNumber\\\": \\\"0246436671\\\", \\\"amount\\\": 500}\""
+    },
+    "expectedResponse": {
+      "success": true,
+      "data": {
+        "flowInstanceId": "uuid-here",
+        "sessionId": "260201130000001",
+        "status": "ACCEPTED",
+        "note": "Use GET /api/v1/test/status/:instanceId to check progress"
+      }
+    }
+  },
+
+  "ftSync": {
+    "description": "FT Sync - Same as FT but waits for flow execution (useful for debugging)",
+    "endpoint": "POST /test/ft-sync",
+    "payloads": {
+      "minimal": {
+        "amount": 100
+      }
+    },
+    "curlExample": "curl -X POST http://localhost:3002/api/v1/test/ft-sync -H \"Content-Type: application/json\" -d \"{\\\"amount\\\": 100}\""
+  },
+
+  "statusCheck": {
+    "description": "Check transaction status by flow instance ID",
+    "endpoint": "GET /test/status/:instanceId",
+    "curlExample": "curl http://localhost:3002/api/v1/test/status/{flowInstanceId}"
+  },
+
+  "samplePayloads": {
+    "description": "Get auto-generated sample payloads with current timestamps",
+    "endpoint": "GET /test/payloads",
+    "curlExample": "curl http://localhost:3002/api/v1/test/payloads"
+  },
+
+  "recentTests": {
+    "description": "List recent test transactions",
+    "endpoint": "GET /test/recent",
+    "curlExample": "curl http://localhost:3002/api/v1/test/recent?limit=10"
+  },
+
+  "testAccounts": {
+    "description": "GIP Simulator test accounts",
+    "accounts": [
+      {
+        "accountNumber": "0246089019",
+        "accountName": "ENOCH DANSO CLINTON",
+        "bankCode": "300315",
+        "balance": 50000
+      },
+      {
+        "accountNumber": "0246436671",
+        "accountName": "KWAKU MANU",
+        "bankCode": "300591",
+        "balance": 25000
+      },
+      {
+        "accountNumber": "0011010104334",
+        "accountName": "FAUTINA ABDULAI",
+        "bankCode": "300307",
+        "balance": 100000
+      },
+      {
+        "accountNumber": "1020820171412",
+        "accountName": "OLAM PURCHASE ACCOUNT",
+        "bankCode": "300300",
+        "balance": 500000
+      }
+    ]
+  },
+
+  "bankCodes": {
+    "300300": "Test Bank 1",
+    "300307": "Test Bank 2",
+    "300315": "Test Bank 3",
+    "300591": "Test Bank 4"
+  },
+
+  "responseCodes": {
+    "000": "Success",
+    "001": "Processing/Pending",
+    "381": "Account not found",
+    "909": "System timeout",
+    "912": "System unavailable",
+    "990": "Indeterminate",
+    "999": "Validation error"
+  },
+
+  "functionCodes": {
+    "230": "NEC - Name Enquiry Check",
+    "240": "FTC - Funds Transfer Credit",
+    "241": "FTD - Funds Transfer Debit",
+    "111": "TSQ - Transaction Status Query"
+  },
+
+  "testingWorkflow": {
+    "step1": "Start GIP simulator on port 4001",
+    "step2": "Start Orchestrator on port 3002",
+    "step3": "Test NEC first: POST /test/nec",
+    "step4": "If NEC works, test FT: POST /test/ft",
+    "step5": "Check FT status: GET /test/status/:instanceId",
+    "step6": "View recent transactions: GET /test/recent"
+  }
+}

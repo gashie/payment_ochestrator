@@ -24,22 +24,23 @@ const processIncomingCallback = async (callbackData) => {
         tracking_number: trackingNumber,
         payload: JSON.stringify(callbackData),
         source: callbackData.source || 'EXTERNAL',
-        received_at: new Date()
+        action_code: callbackData.actionCode,
+        approval_code: callbackData.approvalCode,
+        function_code: callbackData.functionCode
     });
 
-    // Find matching expected callback
+    // Find matching expected callback (status = 'PENDING')
     const expectedCallback = await expectedCallbacksModel.findOne({
         session_id: sessionId,
-        is_matched: false
+        status: 'PENDING'
     });
 
     if (!expectedCallback) {
         logger.warn('No matching expected callback found', { sessionId, trackingNumber });
-        
+
         // Store as unmatched for later processing
         await receivedCallbacksModel.update(receivedCallback.id, {
-            is_matched: false,
-            match_status: 'UNMATCHED'
+            processed: false
         });
 
         return {
@@ -50,23 +51,23 @@ const processIncomingCallback = async (callbackData) => {
 
     // Mark callbacks as matched
     await expectedCallbacksModel.update(expectedCallback.id, {
-        is_matched: true,
-        matched_at: new Date(),
-        received_callback_id: receivedCallback.id
+        status: 'MATCHED',
+        received_at: new Date(),
+        received_payload: JSON.stringify(callbackData)
     });
 
     await receivedCallbacksModel.update(receivedCallback.id, {
-        is_matched: true,
-        match_status: 'MATCHED',
-        expected_callback_id: expectedCallback.id,
-        flow_instance_id: expectedCallback.flow_instance_id,
-        step_execution_id: expectedCallback.step_execution_id
+        processed: true,
+        matched_to_instance_id: expectedCallback.flow_instance_id,
+        matched_to_step_id: expectedCallback.step_execution_id,
+        processed_at: new Date()
     });
 
     // Log the match
     await processLogsModel.create({
         flow_instance_id: expectedCallback.flow_instance_id,
-        event_type: 'CALLBACK_RECEIVED',
+        log_type: 'CALLBACK_RECEIVED',
+        message: 'Callback received and matched',
         details: JSON.stringify({
             sessionId,
             trackingNumber,
@@ -114,25 +115,26 @@ const processCallbackForStep = async (instanceId, stepExecutionId, callbackData)
         tracking_number: callbackData.trackingNumber,
         payload: JSON.stringify(callbackData),
         source: 'DIRECT',
-        is_matched: true,
-        match_status: 'MATCHED',
-        flow_instance_id: instanceId,
-        step_execution_id: stepExecutionId,
-        received_at: new Date()
+        processed: true,
+        matched_to_instance_id: instanceId,
+        matched_to_step_id: stepExecutionId,
+        action_code: callbackData.actionCode,
+        approval_code: callbackData.approvalCode,
+        function_code: callbackData.functionCode,
+        processed_at: new Date()
     });
 
-    // Update expected callback if exists
+    // Update expected callback if exists (status = 'PENDING' or 'TIMEOUT')
     const expectedCallback = await expectedCallbacksModel.findOne({
         flow_instance_id: instanceId,
-        step_execution_id: stepExecutionId,
-        is_matched: false
+        step_execution_id: stepExecutionId
     });
 
-    if (expectedCallback) {
+    if (expectedCallback && expectedCallback.status !== 'MATCHED') {
         await expectedCallbacksModel.update(expectedCallback.id, {
-            is_matched: true,
-            matched_at: new Date(),
-            received_callback_id: receivedCallback.id
+            status: 'MATCHED',
+            received_at: new Date(),
+            received_payload: JSON.stringify(callbackData)
         });
     }
 
@@ -194,7 +196,8 @@ const sendCallbackToBfs = async (instanceId, payload) => {
         // Log successful callback
         await processLogsModel.create({
             flow_instance_id: instanceId,
-            event_type: 'BFS_CALLBACK_SENT',
+            log_type: 'BFS_CALLBACK_SENT',
+            message: 'Successfully sent callback to BFS',
             details: JSON.stringify({
                 url: instance.bfs_callback_url,
                 status: response.status,
@@ -222,7 +225,8 @@ const sendCallbackToBfs = async (instanceId, payload) => {
 
         await processLogsModel.create({
             flow_instance_id: instanceId,
-            event_type: 'BFS_CALLBACK_FAILED',
+            log_type: 'BFS_CALLBACK_FAILED',
+            message: 'Failed to send callback to BFS',
             details: JSON.stringify({
                 url: instance.bfs_callback_url,
                 error: error.message
@@ -243,9 +247,8 @@ const checkTimedOutCallbacks = async () => {
         SELECT ec.*, fi.session_id as instance_session_id
         FROM expected_callbacks ec
         JOIN flow_instances fi ON ec.flow_instance_id = fi.id
-        WHERE ec.is_matched = false
-        AND ec.timeout_at < NOW()
-        AND ec.is_timed_out = false
+        WHERE ec.status = 'PENDING'
+        AND ec.expected_by < NOW()
     `);
 
     for (const callback of timedOut) {
@@ -257,8 +260,7 @@ const checkTimedOutCallbacks = async () => {
 
         // Mark as timed out
         await expectedCallbacksModel.update(callback.id, {
-            is_timed_out: true,
-            timed_out_at: new Date()
+            status: 'TIMEOUT'
         });
 
         // Update step execution
@@ -271,10 +273,11 @@ const checkTimedOutCallbacks = async () => {
         // Log timeout
         await processLogsModel.create({
             flow_instance_id: callback.flow_instance_id,
-            event_type: 'CALLBACK_TIMEOUT',
+            log_type: 'CALLBACK_TIMEOUT',
+            message: 'Callback timed out waiting for response',
             details: JSON.stringify({
                 stepExecutionId: callback.step_execution_id,
-                expectedAt: callback.timeout_at
+                expectedAt: callback.expected_by
             })
         });
 
@@ -300,12 +303,12 @@ const checkTimedOutCallbacks = async () => {
  */
 const getCallbackStats = async (timeRange = '24 hours') => {
     const stats = await expectedCallbacksModel.raw(`
-        SELECT 
+        SELECT
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE is_matched = true) as matched,
-            COUNT(*) FILTER (WHERE is_matched = false AND is_timed_out = false) as pending,
-            COUNT(*) FILTER (WHERE is_timed_out = true) as timed_out,
-            AVG(EXTRACT(EPOCH FROM (matched_at - created_at))) as avg_match_time_seconds
+            COUNT(*) FILTER (WHERE status = 'MATCHED') as matched,
+            COUNT(*) FILTER (WHERE status = 'PENDING') as pending,
+            COUNT(*) FILTER (WHERE status = 'TIMEOUT') as timed_out,
+            AVG(EXTRACT(EPOCH FROM (received_at - created_at))) as avg_match_time_seconds
         FROM expected_callbacks
         WHERE created_at >= NOW() - INTERVAL '${timeRange}'
     `);
@@ -318,14 +321,13 @@ const getCallbackStats = async (timeRange = '24 hours') => {
  */
 const listPendingCallbacks = async (limit = 50) => {
     return expectedCallbacksModel.raw(`
-        SELECT ec.*, fi.session_id as instance_session_id, 
+        SELECT ec.*, fi.session_id as instance_session_id,
                fi.status as instance_status,
                se.status as step_status
         FROM expected_callbacks ec
         JOIN flow_instances fi ON ec.flow_instance_id = fi.id
         JOIN step_executions se ON ec.step_execution_id = se.id
-        WHERE ec.is_matched = false
-        AND ec.is_timed_out = false
+        WHERE ec.status = 'PENDING'
         ORDER BY ec.created_at ASC
         LIMIT $1
     `, [limit]);
@@ -336,8 +338,8 @@ const listPendingCallbacks = async (limit = 50) => {
  */
 const retryUnmatchedCallbacks = async () => {
     const unmatched = await receivedCallbacksModel.findAll({
-        where: { is_matched: false, match_status: 'UNMATCHED' },
-        orderBy: 'received_at DESC',
+        where: { processed: false },
+        orderBy: 'created_at DESC',
         limit: 100
     });
 
@@ -345,27 +347,25 @@ const retryUnmatchedCallbacks = async () => {
 
     for (const callback of unmatched) {
         const payload = safeJsonParse(callback.payload, {});
-        
+
         // Try to find matching expected callback
         const expectedCallback = await expectedCallbacksModel.findOne({
             session_id: callback.session_id,
-            is_matched: false,
-            is_timed_out: false
+            status: 'PENDING'
         });
 
         if (expectedCallback) {
             await expectedCallbacksModel.update(expectedCallback.id, {
-                is_matched: true,
-                matched_at: new Date(),
-                received_callback_id: callback.id
+                status: 'MATCHED',
+                received_at: new Date(),
+                received_payload: JSON.stringify(payload)
             });
 
             await receivedCallbacksModel.update(callback.id, {
-                is_matched: true,
-                match_status: 'MATCHED_RETRY',
-                expected_callback_id: expectedCallback.id,
-                flow_instance_id: expectedCallback.flow_instance_id,
-                step_execution_id: expectedCallback.step_execution_id
+                processed: true,
+                matched_to_instance_id: expectedCallback.flow_instance_id,
+                matched_to_step_id: expectedCallback.step_execution_id,
+                processed_at: new Date()
             });
 
             // Resume flow

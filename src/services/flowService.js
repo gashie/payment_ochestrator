@@ -141,13 +141,14 @@ const buildStepGraph = (steps, transitions) => {
  * Get next step based on current step and conditions
  */
 const getNextStep = async (flowDefinition, currentStepId, executionData) => {
-    const { stepGraph } = flowDefinition;
+    const { stepGraph, steps } = flowDefinition;
     const currentNode = stepGraph[currentStepId];
 
     if (!currentNode) {
         throw new Error(`Step not found in graph: ${currentStepId}`);
     }
 
+    // First try explicit transitions
     const outgoingTransitions = currentNode.outgoing
         .sort((a, b) => a.priority - b.priority);
 
@@ -159,6 +160,59 @@ const getNextStep = async (flowDefinition, currentStepId, executionData) => {
                 return nextStepNode.step;
             }
         }
+    }
+
+    // Fallback to step_order if no explicit transitions
+    if (outgoingTransitions.length === 0) {
+        const currentStep = currentNode.step;
+        const currentOrder = currentStep.step_order;
+
+        // Handle CONDITION steps - evaluate condition_config to branch
+        if (currentStep.step_type === 'CONDITION') {
+            const config = safeJsonParse(currentStep.config, {});
+            const conditionField = config.condition_field;
+            const successValues = config.success_values || [];
+            const failureValues = config.failure_values || [];
+
+            if (conditionField) {
+                const fieldValue = getFieldValue(executionData, conditionField);
+
+                // Check for failure first
+                if (failureValues.includes(fieldValue)) {
+                    // Find failure path step (usually ends with FAIL)
+                    const failStep = steps.find(s =>
+                        s.step_code.includes('FAIL') &&
+                        s.step_code.startsWith(currentStep.step_code.replace('_CHECK', ''))
+                    );
+                    if (failStep) return failStep;
+                }
+
+                // Check for success
+                if (successValues.includes(fieldValue)) {
+                    // Continue to next step by order
+                    const nextStep = steps.find(s => s.step_order === currentOrder + 1);
+                    return nextStep || null;
+                }
+
+                // If value doesn't match any, treat as failure
+                logger.warn('Condition value not in success or failure values', {
+                    step: currentStep.step_code,
+                    field: conditionField,
+                    value: fieldValue
+                });
+
+                // Default to failure path for unknown values
+                const failStep = steps.find(s =>
+                    s.step_code.includes('FAIL') &&
+                    s.step_order > currentOrder
+                );
+                return failStep || null;
+            }
+        }
+
+        // For non-CONDITION steps, simply get next by step_order
+        const nextStep = steps.find(s => s.step_order === currentOrder + 1);
+        return nextStep || null;
     }
 
     // No valid transition found

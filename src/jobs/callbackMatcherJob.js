@@ -11,7 +11,7 @@ const checkTimedOutCallbacks = async () => {
         const timedOut = await expectedCallbacksModel.raw(`
             UPDATE expected_callbacks
             SET status = 'TIMEOUT'
-            WHERE status = 'WAITING' 
+            WHERE status = 'PENDING' 
                 AND expected_by < NOW()
             RETURNING *
         `);
@@ -98,7 +98,7 @@ const matchUnmatchedCallbacks = async () => {
                     where: {
                         session_id: sessionId,
                         tracking_number: trackingNumber,
-                        status: 'WAITING'
+                        status: 'PENDING'
                     }
                 });
                 

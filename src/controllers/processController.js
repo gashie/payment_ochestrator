@@ -60,7 +60,7 @@ const processRequest = async (req, res) => {
             // Add to job queue for background processing
             await jobQueueModel.create({
                 job_type: 'EXECUTE_FLOW',
-                job_data: JSON.stringify({ flowInstanceId: instance.id }),
+                payload: JSON.stringify({ flowInstanceId: instance.id }),
                 status: 'PENDING',
                 priority: 1
             });

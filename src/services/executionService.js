@@ -515,6 +515,7 @@ const executeApiCallStep = async (instance, step, payload, stepExecution) => {
                 session_id: payload.sessionId,
                 tracking_number: payload.trackingNumber,
                 callback_type: config.callbackType || 'API_RESPONSE',
+                status: 'PENDING',
                 match_fields: JSON.stringify(config.expectedCallbackFields || ['actionCode']),
                 expected_by: new Date(Date.now() + (config.callbackTimeout || 300000))
             });
@@ -568,6 +569,7 @@ const executeCallbackStep = async (instance, step, payload, stepExecution) => {
         session_id: payload.sessionId,
         tracking_number: payload.trackingNumber,
         callback_type: config.callbackType || 'CALLBACK',
+        status: 'PENDING',
         match_fields: JSON.stringify(config.expectedFields || ['actionCode']),
         expected_by: new Date(Date.now() + (config.timeout || 300000))
     });

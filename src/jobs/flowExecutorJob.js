@@ -37,7 +37,7 @@ const processFlowExecutionJobs = async () => {
         
         for (const job of jobs) {
             try {
-                const jobData = JSON.parse(job.job_data);
+                const jobData = typeof job.payload === 'string' ? JSON.parse(job.payload) : job.payload;
                 const { flowInstanceId } = jobData;
                 
                 logger.flow('Executing flow instance', {
@@ -64,7 +64,7 @@ const processFlowExecutionJobs = async () => {
             } catch (error) {
                 logger.error(`Flow execution job failed`, error, { 
                     jobId: job.id,
-                    flowInstanceId: JSON.parse(job.job_data)?.flowInstanceId
+                    flowInstanceId: (typeof job.payload === 'string' ? JSON.parse(job.payload) : job.payload)?.flowInstanceId
                 });
                 
                 // Update job as failed or retry

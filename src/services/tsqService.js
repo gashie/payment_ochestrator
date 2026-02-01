@@ -50,14 +50,14 @@ const createTsqRequest = async (instanceId, originalPayload, reason) => {
     // Create TSQ record
     const tsqRequest = await tsqRequestsModel.create({
         flow_instance_id: instanceId,
-        session_id: originalPayload.sessionId,
-        tracking_number: originalPayload.trackingNumber,
-        original_function_code: originalPayload.functionCode,
+        original_session_id: originalPayload.sessionId,
+        original_tracking_number: originalPayload.trackingNumber,
         request_payload: JSON.stringify(tsqPayload),
         status: TSQ_STATUSES.PENDING,
-        retry_count: 0,
-        max_retries: MAX_TSQ_RETRIES,
-        reason: reason,
+        attempt_number: 1,
+        max_attempts: MAX_TSQ_RETRIES,
+        result_message: reason,
+        metadata: JSON.stringify({ originalFunctionCode: originalPayload.functionCode, reason }),
         next_retry_at: new Date(Date.now() + TSQ_RETRY_INTERVAL_MS)
     });
 
@@ -70,7 +70,8 @@ const createTsqRequest = async (instanceId, originalPayload, reason) => {
 
     await processLogsModel.create({
         flow_instance_id: instanceId,
-        event_type: 'TSQ_CREATED',
+        log_type: 'TSQ_CREATED',
+        message: `TSQ request created: ${reason}`,
         details: JSON.stringify({
             tsqId: tsqRequest.id,
             reason,
@@ -98,8 +99,8 @@ const executeTsqRequest = async (tsqId) => {
     // Update status
     await tsqRequestsModel.update(tsqId, {
         status: TSQ_STATUSES.IN_PROGRESS,
-        last_attempt_at: new Date(),
-        retry_count: tsqRequest.retry_count + 1
+        sent_at: new Date(),
+        attempt_number: (tsqRequest.attempt_number || 0) + 1
     });
 
     const payload = safeJsonParse(tsqRequest.request_payload, {});
@@ -142,24 +143,27 @@ const executeTsqRequest = async (tsqId) => {
         });
 
         // Evaluate response
-        const result = evaluateTsqResponse(actionCode, approvalCode, tsqRequest.retry_count + 1);
+        const result = evaluateTsqResponse(actionCode, approvalCode, (tsqRequest.attempt_number || 0) + 1);
 
         await tsqRequestsModel.update(tsqId, {
             status: result.status,
-            result_description: result.description,
+            result_status: result.finalResult || result.status,
+            result_message: result.description,
+            response_at: new Date(),
             next_retry_at: result.shouldRetry ? new Date(Date.now() + TSQ_RETRY_INTERVAL_MS) : null
         });
 
         // Log result
         await processLogsModel.create({
             flow_instance_id: tsqRequest.flow_instance_id,
-            event_type: 'TSQ_EXECUTED',
+            log_type: 'TSQ_EXECUTED',
+            message: `TSQ executed: ${result.status}`,
             details: JSON.stringify({
                 tsqId,
                 actionCode,
                 approvalCode,
                 result: result.status,
-                retryCount: tsqRequest.retry_count + 1
+                attemptNumber: (tsqRequest.attempt_number || 0) + 1
             })
         });
 
@@ -181,12 +185,12 @@ const executeTsqRequest = async (tsqId) => {
             error: error.message
         });
 
-        const newRetryCount = tsqRequest.retry_count + 1;
-        const shouldRetry = newRetryCount < MAX_TSQ_RETRIES;
+        const newAttemptNumber = (tsqRequest.attempt_number || 0) + 1;
+        const shouldRetry = newAttemptNumber < MAX_TSQ_RETRIES;
 
         await tsqRequestsModel.update(tsqId, {
             status: shouldRetry ? TSQ_STATUSES.PENDING : TSQ_STATUSES.FAILED,
-            error_message: error.message,
+            result_message: error.message,
             next_retry_at: shouldRetry ? new Date(Date.now() + TSQ_RETRY_INTERVAL_MS) : null
         });
 
@@ -343,7 +347,7 @@ const processPendingTsqRequests = async () => {
         SELECT * FROM tsq_requests
         WHERE status = 'PENDING'
         AND next_retry_at <= NOW()
-        AND retry_count < max_retries
+        AND attempt_number < max_attempts
         ORDER BY next_retry_at ASC
         LIMIT 50
     `);
@@ -373,13 +377,13 @@ const processPendingTsqRequests = async () => {
  */
 const getTsqStats = async (timeRange = '24 hours') => {
     const stats = await tsqRequestsModel.raw(`
-        SELECT 
+        SELECT
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE status = 'SUCCESS') as success,
             COUNT(*) FILTER (WHERE status = 'FAILED') as failed,
             COUNT(*) FILTER (WHERE status = 'NOT_FOUND') as not_found,
             COUNT(*) FILTER (WHERE status = 'PENDING') as pending,
-            AVG(retry_count) as avg_retries
+            AVG(attempt_number) as avg_attempts
         FROM tsq_requests
         WHERE created_at >= NOW() - INTERVAL '${timeRange}'
     `);
@@ -406,7 +410,7 @@ const markExpiredTsqRequests = async () => {
         SET status = 'EXPIRED',
             updated_at = NOW()
         WHERE status = 'PENDING'
-        AND retry_count >= max_retries
+        AND attempt_number >= max_attempts
         AND next_retry_at < NOW() - INTERVAL '1 hour'
         RETURNING id, flow_instance_id
     `);
@@ -414,7 +418,8 @@ const markExpiredTsqRequests = async () => {
     for (const expired of result) {
         await processLogsModel.create({
             flow_instance_id: expired.flow_instance_id,
-            event_type: 'TSQ_EXPIRED',
+            log_type: 'TSQ_EXPIRED',
+            message: 'TSQ request expired',
             details: JSON.stringify({ tsqId: expired.id })
         });
     }

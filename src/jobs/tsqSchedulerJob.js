@@ -1,6 +1,7 @@
 const { tsqRequestsModel, flowInstancesModel } = require('../models');
 const tsqService = require('../services/tsqService');
 const logger = require('../utils/logger');
+const { safeJsonParse } = require('../utils/helpers');
 
 /**
  * Process pending TSQ requests
@@ -123,15 +124,18 @@ const scheduleTsqForIndeterminateResponses = async () => {
         
         for (const instance of indeterminate) {
             try {
-                await tsqService.createTsqRequest(instance.id, 'WAITING_CALLBACK');
-                
-                logger.tsq('Scheduled for indeterminate response', { 
+                // Parse the current payload from the flow instance
+                const currentPayload = safeJsonParse(instance.current_payload, {});
+
+                await tsqService.createTsqRequest(instance.id, currentPayload, 'WAITING_CALLBACK_TIMEOUT');
+
+                logger.tsq('Scheduled for indeterminate response', {
                     flowInstanceId: instance.id,
                     sessionId: instance.session_id,
                     reason: 'Callback wait timeout'
                 });
             } catch (error) {
-                logger.error(`Schedule TSQ failed`, error, { 
+                logger.error(`Schedule TSQ failed`, error, {
                     flowInstanceId: instance.id
                 });
             }

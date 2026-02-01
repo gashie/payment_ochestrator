@@ -9,6 +9,7 @@ const processController = require('../controllers/processController');
 const callbacksController = require('../controllers/callbacksController');
 const monitoringController = require('../controllers/monitoringController');
 const reportsController = require('../controllers/reportsController');
+const testController = require('../controllers/testController');
 
 // Validators
 const { 
@@ -100,6 +101,7 @@ router.get('/process/active', processController.getActiveFlowInstances);
 router.post('/callbacks', validate(callbackSchemas.receive), callbacksController.receiveCallback);
 router.post('/callbacks/ftd', validate(callbackSchemas.receive), callbacksController.receiveFtdCallback);
 router.post('/callbacks/ftc', validate(callbackSchemas.receive), callbacksController.receiveFtcCallback);
+router.post('/callbacks/receive/:instanceId/:stepId', callbacksController.receiveCallbackForStep);
 router.get('/callbacks/expected', callbacksController.getExpectedCallbacks);
 router.get('/callbacks/received', callbacksController.getReceivedCallbacks);
 router.get('/callbacks/pending', callbacksController.getPendingCallbacks);
@@ -135,5 +137,16 @@ router.get('/reports/reversals', reportsController.getReversalReport);
 router.get('/reports/tsq', reportsController.getTsqReport);
 router.get('/reports/audit-logs', reportsController.getAuditLogs);
 router.get('/reports/export/transactions', reportsController.exportTransactions);
+
+// ===========================================
+// Test Routes (Orchestrator to GIP Testing)
+// ===========================================
+router.get('/test/payloads', testController.getSamplePayloads);
+router.get('/test/recent', testController.getRecentTests);
+router.get('/test/status/:instanceId', testController.getTestStatus);
+router.post('/test/nec', testController.testNec);
+router.post('/test/ft', testController.testFt);
+router.post('/test/ft-sync', testController.testFtSync);
+router.post('/test/callback-receiver', testController.callbackReceiver);
 
 module.exports = router;

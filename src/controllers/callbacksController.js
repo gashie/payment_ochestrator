@@ -354,10 +354,53 @@ const getUnmatchedCallbacks = async (req, res) => {
     }
 };
 
+/**
+ * Receive callback for a specific flow instance and step
+ * This endpoint is used when orchestrator sends callbackUrl to GIP
+ */
+const receiveCallbackForStep = async (req, res) => {
+    try {
+        const { instanceId, stepId } = req.params;
+        const payload = req.body;
+
+        logger.info('Received callback for step', {
+            instanceId,
+            stepId,
+            sessionId: payload.sessionId,
+            actionCode: payload.actionCode
+        });
+
+        // Process the callback for this specific step
+        const result = await callbackService.processCallbackForStep(instanceId, stepId, payload);
+
+        res.json({
+            success: true,
+            data: {
+                message: 'Callback received and processed',
+                instanceId,
+                stepId,
+                matched: result.matched,
+                continued: result.continued
+            }
+        });
+    } catch (error) {
+        logger.error('Receive callback for step failed', {
+            error: error.message,
+            instanceId: req.params.instanceId,
+            stepId: req.params.stepId
+        });
+        res.status(400).json({
+            success: false,
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     receiveCallback,
     receiveFtdCallback,
     receiveFtcCallback,
+    receiveCallbackForStep,
     getExpectedCallbacks,
     getReceivedCallbacks,
     getCallbackById,
