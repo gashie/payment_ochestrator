@@ -127,7 +127,14 @@ const scheduleTsqForIndeterminateResponses = async () => {
                 // Parse the current payload from the flow instance
                 const currentPayload = safeJsonParse(instance.current_payload, {});
 
-                await tsqService.createTsqRequest(instance.id, currentPayload, 'WAITING_CALLBACK_TIMEOUT');
+                // Ensure sessionId and trackingNumber are set from instance if not in payload
+                const tsqPayload = {
+                    ...currentPayload,
+                    sessionId: currentPayload.sessionId || instance.session_id,
+                    trackingNumber: currentPayload.trackingNumber || instance.tracking_number
+                };
+
+                await tsqService.createTsqRequest(instance.id, tsqPayload, 'WAITING_CALLBACK_TIMEOUT');
 
                 logger.tsq('Scheduled for indeterminate response', {
                     flowInstanceId: instance.id,

@@ -32,12 +32,20 @@ const createTsqRequest = async (instanceId, originalPayload, reason) => {
         throw new Error(`Flow instance not found: ${instanceId}`);
     }
 
+    // Use instance values as fallback for critical fields
+    const sessionId = originalPayload.sessionId || instance.session_id;
+    const trackingNumber = originalPayload.trackingNumber || instance.tracking_number;
+
+    if (!sessionId) {
+        throw new Error(`Cannot create TSQ: sessionId is required (instanceId: ${instanceId})`);
+    }
+
     // Build TSQ payload
     const tsqPayload = {
         originBank: originalPayload.originBank,
         destBank: originalPayload.destBank,
-        sessionId: originalPayload.sessionId,
-        trackingNumber: originalPayload.trackingNumber,
+        sessionId: sessionId,
+        trackingNumber: trackingNumber,
         amount: originalPayload.amount,
         dateTime: originalPayload.dateTime || formatDateTime(),
         accountToDebit: originalPayload.accountToDebit,
@@ -50,8 +58,8 @@ const createTsqRequest = async (instanceId, originalPayload, reason) => {
     // Create TSQ record
     const tsqRequest = await tsqRequestsModel.create({
         flow_instance_id: instanceId,
-        original_session_id: originalPayload.sessionId,
-        original_tracking_number: originalPayload.trackingNumber,
+        original_session_id: sessionId,
+        original_tracking_number: trackingNumber,
         request_payload: JSON.stringify(tsqPayload),
         status: TSQ_STATUSES.PENDING,
         attempt_number: 1,

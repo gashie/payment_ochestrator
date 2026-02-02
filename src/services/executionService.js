@@ -312,7 +312,7 @@ const executeStep = async (instance, step, payload, stepExecution) => {
             return executeEndStep(step, payload);
 
         case 'TRANSFORM':
-            return executeTransformStep(step, payload);
+            return executeTransformStep(step, payload, stepExecution);
 
         case 'API_CALL':
             return executeApiCallStep(instance, step, payload, stepExecution);
@@ -363,7 +363,7 @@ const executeEndStep = async (step, payload) => {
 /**
  * Execute TRANSFORM step - apply field mappings
  */
-const executeTransformStep = async (step, payload) => {
+const executeTransformStep = async (step, payload, stepExecution) => {
     // Handle fieldMappings as either { input, output } object or direct array
     const fieldMappings = step.fieldMappings || {};
     const mappings = Array.isArray(fieldMappings)
@@ -392,6 +392,13 @@ const executeTransformStep = async (step, payload) => {
         for (const transform of config.transformations) {
             transformedPayload = applyTransform(transformedPayload, transform);
         }
+    }
+
+    // Save the transformed payload to step execution
+    if (stepExecution) {
+        await stepExecutionsModel.update(stepExecution.id, {
+            transformed_payload: JSON.stringify(transformedPayload)
+        });
     }
 
     return {
@@ -481,6 +488,19 @@ const executeApiCallStep = async (instance, step, payload, stepExecution) => {
         method
     });
 
+    // Save the API request before making the call
+    await stepExecutionsModel.update(stepExecution.id, {
+        api_request: JSON.stringify({
+            url,
+            method,
+            headers: { ...headers, Authorization: headers.Authorization ? '[REDACTED]' : undefined },
+            body: requestBody
+        }),
+        transformed_payload: JSON.stringify(requestBody)
+    });
+
+    const startTime = Date.now();
+
     try {
         const response = await axios({
             method,
@@ -490,6 +510,7 @@ const executeApiCallStep = async (instance, step, payload, stepExecution) => {
             timeout: step.timeout_ms || 30000
         });
 
+        const responseTime = Date.now() - startTime;
         const responseData = response.data;
 
         // Merge response with payload
@@ -503,7 +524,8 @@ const executeApiCallStep = async (instance, step, payload, stepExecution) => {
         // Update step execution with response
         await stepExecutionsModel.update(stepExecution.id, {
             api_response: JSON.stringify(responseData),
-            api_status_code: response.status
+            api_status_code: response.status,
+            api_response_time_ms: responseTime
         });
 
         // Check if callback is expected
@@ -541,15 +563,25 @@ const executeApiCallStep = async (instance, step, payload, stepExecution) => {
         };
 
     } catch (error) {
+        const responseTime = Date.now() - startTime;
+
         logger.error('API call failed', {
             instanceId: instance.id,
             stepId: step.id,
-            error: error.message
+            error: error.message,
+            responseTime
         });
 
         await stepExecutionsModel.update(stepExecution.id, {
-            api_response: JSON.stringify(error.response?.data || {}),
-            api_status_code: error.response?.status || 0
+            api_response: JSON.stringify(error.response?.data || { error: error.message }),
+            api_status_code: error.response?.status || 0,
+            api_response_time_ms: responseTime,
+            error_message: error.message,
+            error_details: JSON.stringify({
+                code: error.code,
+                status: error.response?.status,
+                statusText: error.response?.statusText
+            })
         });
 
         throw error;
@@ -712,11 +744,17 @@ const resumeAfterCallback = async (instanceId, stepExecutionId, callbackPayload)
         ...callbackPayload
     };
 
-    // Update step execution
+    // Update step execution with callback data
     await stepExecutionsModel.update(stepExecutionId, {
         status: STEP_STATUSES.COMPLETED,
         output_payload: JSON.stringify(currentPayload),
+        callback_payload: JSON.stringify(callbackPayload),
+        callback_received: true,
         callback_received_at: new Date(),
+        action_code: callbackPayload.actionCode,
+        approval_code: callbackPayload.approvalCode,
+        response_code: callbackPayload.responseCode,
+        response_message: callbackPayload.responseMessage || callbackPayload.narration,
         completed_at: new Date()
     });
 

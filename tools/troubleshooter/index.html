@@ -2148,19 +2148,37 @@
                 ` : ''}
 
                 <div class="tabs" style="margin-top:24px;">
-                    <div class="tab active" onclick="switchStepTab(this, 'input')">Input Payload</div>
-                    <div class="tab" onclick="switchStepTab(this, 'output')">Output Payload</div>
+                    <div class="tab active" onclick="switchStepTab(this, 'input')">Input</div>
+                    <div class="tab" onclick="switchStepTab(this, 'output')">Output</div>
                     <div class="tab" onclick="switchStepTab(this, 'transformed')">Transformed</div>
-                    <div class="tab" onclick="switchStepTab(this, 'api-req')">API Request</div>
-                    <div class="tab" onclick="switchStepTab(this, 'api-res')">API Response</div>
-                    ${step.callback_payload ? `<div class="tab" onclick="switchStepTab(this, 'callback')">Callback</div>` : ''}
+                    <div class="tab" onclick="switchStepTab(this, 'api-req')">📤 API Request</div>
+                    <div class="tab" onclick="switchStepTab(this, 'api-res')">📥 API Response</div>
+                    <div class="tab" onclick="switchStepTab(this, 'callback')">📞 Callback</div>
                 </div>
-                <div id="step-tab-input" class="step-tab-content"><pre class="debug-json">${formatJson(step.input_payload) || 'No input payload'}</pre></div>
-                <div id="step-tab-output" class="step-tab-content" style="display:none"><pre class="debug-json">${formatJson(step.output_payload) || 'No output payload'}</pre></div>
-                <div id="step-tab-transformed" class="step-tab-content" style="display:none"><pre class="debug-json">${formatJson(step.transformed_payload) || 'No transformed payload'}</pre></div>
-                <div id="step-tab-api-req" class="step-tab-content" style="display:none"><pre class="debug-json">${formatJson(step.api_request) || 'No API request'}</pre></div>
-                <div id="step-tab-api-res" class="step-tab-content" style="display:none"><pre class="debug-json">${formatJson(step.api_response) || 'No API response'}</pre></div>
-                ${step.callback_payload ? `<div id="step-tab-callback" class="step-tab-content" style="display:none"><pre class="debug-json">${formatJson(step.callback_payload)}</pre></div>` : ''}
+                <div id="step-tab-input" class="step-tab-content">
+                    <div style="margin-bottom:8px;color:var(--text-secondary);font-size:12px;">Data received by this step</div>
+                    <pre class="debug-json">${formatJson(step.input_payload) || '<i style="color:#888">No data</i>'}</pre>
+                </div>
+                <div id="step-tab-output" class="step-tab-content" style="display:none">
+                    <div style="margin-bottom:8px;color:var(--text-secondary);font-size:12px;">Data output by this step</div>
+                    <pre class="debug-json">${formatJson(step.output_payload) || '<i style="color:#888">No data</i>'}</pre>
+                </div>
+                <div id="step-tab-transformed" class="step-tab-content" style="display:none">
+                    <div style="margin-bottom:8px;color:var(--text-secondary);font-size:12px;">Data after field mappings/transformations</div>
+                    <pre class="debug-json">${formatJson(step.transformed_payload) || '<i style="color:#888">No data - only captured for TRANSFORM and API_CALL steps</i>'}</pre>
+                </div>
+                <div id="step-tab-api-req" class="step-tab-content" style="display:none">
+                    <div style="margin-bottom:8px;color:var(--text-secondary);font-size:12px;">Request sent to external API (GIP, etc.)</div>
+                    <pre class="debug-json">${formatJson(step.api_request) || '<i style="color:#888">No data - only captured for API_CALL steps</i>'}</pre>
+                </div>
+                <div id="step-tab-api-res" class="step-tab-content" style="display:none">
+                    <div style="margin-bottom:8px;color:var(--text-secondary);font-size:12px;">Response from external API</div>
+                    <pre class="debug-json">${formatJson(step.api_response) || '<i style="color:#888">No data</i>'}</pre>
+                </div>
+                <div id="step-tab-callback" class="step-tab-content" style="display:none">
+                    <div style="margin-bottom:8px;color:var(--text-secondary);font-size:12px;">Callback data received</div>
+                    <pre class="debug-json">${formatJson(step.callback_payload) || '<i style="color:#888">No callback received for this step</i>'}</pre>
+                </div>
 
                 <div style="margin-top: 24px; padding-top:16px; border-top: 1px solid var(--border-color);">
                     <h4 style="margin-bottom: 12px;">What This Step Does:</h4>
