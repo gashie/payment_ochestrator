@@ -88,8 +88,11 @@ const getFlowDefinition = async (flowId, version = null) => {
 
     // Get field mappings for each step (from step's built-in mapping fields)
     const stepsWithMappings = steps.map((step) => {
-        const inputMapping = safeJsonParse(step.input_mapping) || {};
-        const outputMapping = safeJsonParse(step.output_mapping) || {};
+        // Parse input_mapping - can be array of mappings, default to empty array
+        const parsedInput = safeJsonParse(step.input_mapping);
+        const parsedOutput = safeJsonParse(step.output_mapping);
+        const inputMapping = Array.isArray(parsedInput) ? parsedInput : [];
+        const outputMapping = Array.isArray(parsedOutput) ? parsedOutput : [];
         return { ...step, fieldMappings: { input: inputMapping, output: outputMapping } };
     });
 

@@ -799,6 +799,76 @@ app.delete('/api/events/:id', async (req, res) => {
     }
 });
 
+// ============================================
+// SYSTEM CONFIGURATION ENDPOINTS
+// ============================================
+
+// Get all system configurations
+app.get('/api/configs', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT id, config_key, config_value, config_type, description, is_active, updated_at
+            FROM system_configurations
+            WHERE is_active = true
+            ORDER BY config_key
+        `);
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
+// Get single config by key
+app.get('/api/configs/:key', async (req, res) => {
+    try {
+        const { key } = req.params;
+        const result = await pool.query(
+            'SELECT * FROM system_configurations WHERE config_key = $1',
+            [key]
+        );
+
+        if (result.rows.length === 0) {
+            return res.json({ success: false, error: 'Configuration not found' });
+        }
+
+        res.json({ success: true, data: result.rows[0] });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
+// Update config value
+app.put('/api/configs/:key', async (req, res) => {
+    try {
+        const { key } = req.params;
+        const { value, description } = req.body;
+
+        const result = await pool.query(`
+            UPDATE system_configurations
+            SET config_value = COALESCE($2, config_value),
+                description = COALESCE($3, description),
+                updated_at = NOW()
+            WHERE config_key = $1
+            RETURNING *
+        `, [key, value, description]);
+
+        if (result.rows.length === 0) {
+            // Create if doesn't exist
+            const insertResult = await pool.query(`
+                INSERT INTO system_configurations (config_key, config_value, description)
+                VALUES ($1, $2, $3)
+                RETURNING *
+            `, [key, value, description || '']);
+
+            return res.json({ success: true, data: insertResult.rows[0], created: true });
+        }
+
+        res.json({ success: true, data: result.rows[0] });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
 // Health check
 app.get('/api/health', async (req, res) => {
     try {

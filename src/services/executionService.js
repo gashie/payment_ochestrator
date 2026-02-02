@@ -6,6 +6,7 @@ const {
     processLogsModel
 } = require('../models');
 const flowService = require('./flowService');
+const configService = require('./configService');
 const logger = require('../utils/logger');
 const {
     deepClone,
@@ -364,11 +365,31 @@ const executeEndStep = async (step, payload) => {
  * Execute TRANSFORM step - apply field mappings
  */
 const executeTransformStep = async (step, payload, stepExecution) => {
-    // Handle fieldMappings as either { input, output } object or direct array
-    const fieldMappings = step.fieldMappings || {};
-    const mappings = Array.isArray(fieldMappings)
-        ? fieldMappings
-        : (fieldMappings.input || []);
+    // Handle fieldMappings from multiple sources:
+    // 1. step.fieldMappings.input (from flowService mapping)
+    // 2. step.fieldMappings (if it's an array directly)
+    // 3. step.input_mapping (raw from database, parsed)
+    let mappings = [];
+
+    if (step.fieldMappings) {
+        if (Array.isArray(step.fieldMappings)) {
+            mappings = step.fieldMappings;
+        } else if (Array.isArray(step.fieldMappings.input)) {
+            mappings = step.fieldMappings.input;
+        } else if (typeof step.fieldMappings.input === 'object') {
+            // Handle case where input is an object (from safeJsonParse default)
+            mappings = [];
+        }
+    }
+
+    // Fallback: check raw input_mapping from step
+    if (mappings.length === 0 && step.input_mapping) {
+        const parsed = safeJsonParse(step.input_mapping, []);
+        if (Array.isArray(parsed)) {
+            mappings = parsed;
+        }
+    }
+
     const config = safeJsonParse(step.config, {});
 
     if (mappings.length === 0 && !config.transformations) {
@@ -469,9 +490,10 @@ const executeApiCallStep = async (instance, step, payload, stepExecution) => {
         requestBody = applyFieldMappings(payload, step.fieldMappings, swapConfig);
     }
 
-    // Add callback URL if needed
+    // Add callback URL if needed (from database config or env var)
     if (includeCallback) {
-        requestBody.callbackUrl = `${process.env.ORCHESTRATOR_BASE_URL}/api/v1/callbacks/receive/${instance.id}/${stepExecution.id}`;
+        const baseUrl = await configService.getOrchestratorBaseUrl();
+        requestBody.callbackUrl = `${baseUrl}/api/v1/callbacks/receive/${instance.id}/${stepExecution.id}`;
     }
 
     // Build headers

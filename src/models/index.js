@@ -45,6 +45,9 @@ const externalApisModel = createModel('external_apis');
 const usersModel = createModel('users');
 const rolesModel = createModel('roles');
 
+// System Configurations
+const systemConfigurationsModel = createModel('system_configurations');
+
 module.exports = {
     eventTypesModel,
     flowsModel,
@@ -66,5 +69,6 @@ module.exports = {
     jobQueueModel,
     externalApisModel,
     usersModel,
-    rolesModel
+    rolesModel,
+    systemConfigurationsModel
 };

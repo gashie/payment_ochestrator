@@ -36,12 +36,20 @@ const processPendingTsqRequests = async () => {
             try {
                 // Execute TSQ
                 const result = await tsqService.executeTsqRequest(tsq.id);
-                
-                logger.tsq('Executed successfully', { 
-                    tsqId: tsq.id,
-                    flowInstanceId: tsq.flow_instance_id,
-                    result: result.status 
-                });
+
+                // Result can be null if TSQ was already processed or status changed
+                if (result) {
+                    logger.tsq('Executed successfully', {
+                        tsqId: tsq.id,
+                        flowInstanceId: tsq.flow_instance_id,
+                        result: result.status
+                    });
+                } else {
+                    logger.tsq('TSQ skipped (not in PENDING status)', {
+                        tsqId: tsq.id,
+                        flowInstanceId: tsq.flow_instance_id
+                    });
+                }
             } catch (error) {
                 logger.error(`TSQ execution failed`, error, { 
                     tsqId: tsq.id,

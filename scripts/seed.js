@@ -467,6 +467,28 @@ const seed = async () => {
         }
         console.log(`  ✅ Created ${alertRules.length} alert rules`);
 
+        // 9. Create System Configurations
+        console.log('Creating system configurations...');
+        const systemConfigs = [
+            { key: 'ORCHESTRATOR_BASE_URL', value: 'http://localhost:3002', type: 'STRING', desc: 'Base URL for orchestrator callbacks (change this for production)' },
+            { key: 'TSQ_MAX_RETRIES', value: '3', type: 'NUMBER', desc: 'Maximum TSQ retry attempts' },
+            { key: 'TSQ_RETRY_INTERVAL', value: '300', type: 'NUMBER', desc: 'TSQ retry interval in seconds' },
+            { key: 'CALLBACK_TIMEOUT', value: '300', type: 'NUMBER', desc: 'Callback wait timeout in seconds' },
+            { key: 'JOB_PROCESS_INTERVAL', value: '5000', type: 'NUMBER', desc: 'Job processing interval in ms' }
+        ];
+
+        for (const cfg of systemConfigs) {
+            await client.query(
+                `INSERT INTO system_configurations (id, config_key, config_value, config_type, description)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (config_key) DO UPDATE SET
+                    description = EXCLUDED.description,
+                    config_type = EXCLUDED.config_type`,
+                [uuidv4(), cfg.key, cfg.value, cfg.type, cfg.desc]
+            );
+        }
+        console.log(`  ✅ Created ${systemConfigs.length} system configurations`);
+
         await client.query('COMMIT');
 
         // Print summary

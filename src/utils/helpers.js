@@ -211,29 +211,41 @@ const applyFieldMappings = (data, mappings, swapConfig = null) => {
         const transform_type = mapping.transform_type || mapping.transform;
         const default_value = mapping.default_value;
 
-        let value = getNestedValue(data, source_field);
-        
-        // Apply swap if configured
-        if (swapConfig && swapConfig[source_field]) {
-            const swapField = swapConfig[source_field];
-            value = getNestedValue(data, swapField);
+        let value;
+
+        // Handle null/undefined source - for generated fields like dateTime
+        if (source_field === null || source_field === undefined) {
+            // If there's a transform that generates values, pass null to trigger generation
+            if (transform_type === 'formatDateTime' || transform_type === 'toDateTime') {
+                value = applyTransformation(null, transform_type, mapping.transform_config);
+            } else if (default_value !== undefined) {
+                value = default_value;
+            }
+        } else {
+            value = getNestedValue(data, source_field);
+
+            // Apply swap if configured
+            if (swapConfig && swapConfig[source_field]) {
+                const swapField = swapConfig[source_field];
+                value = getNestedValue(data, swapField);
+            }
+
+            // Apply default if value is undefined
+            if (value === undefined && default_value !== undefined) {
+                value = default_value;
+            }
+
+            // Apply transformation
+            if (transform_type && value !== undefined) {
+                value = applyTransformation(value, transform_type, mapping.transform_config);
+            }
         }
-        
-        // Apply default if value is undefined
-        if (value === undefined && default_value !== undefined) {
-            value = default_value;
-        }
-        
-        // Apply transformation
-        if (transform_type && value !== undefined) {
-            value = applyTransformation(value, transform_type, mapping.transform_config);
-        }
-        
+
         if (value !== undefined) {
             setNestedValue(result, target_field, value);
         }
     }
-    
+
     return result;
 };
 
@@ -261,11 +273,15 @@ const applyTransformation = (value, transformType, config = {}) => {
         case 'toString':
             return String(value);
         case 'toAmount':
-            return formatAmount(value, config.length);
+        case 'formatAmount':
+            // Format amount: 1000 → "000000100000" (12 digits, value * 100)
+            return formatAmount(value, config.length || 12);
         case 'fromAmount':
             return parseAmount(value);
         case 'toDateTime':
-            return formatDateTime(new Date(value));
+        case 'formatDateTime':
+            // Generate current datetime in YYMMDDhhmmss format
+            return formatDateTime(value ? new Date(value) : new Date());
         case 'default':
             return value === undefined || value === null ? config.defaultValue : value;
         default:
