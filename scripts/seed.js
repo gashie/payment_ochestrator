@@ -150,9 +150,32 @@ const seed = async () => {
             { source: null, target: 'dateTime', transform: 'formatDateTime' }
         ];
 
-        // Clean up old NEC flow steps and transitions (for re-seeding)
+        // Clean up old NEC flow data (for re-seeding)
+        console.log('  Cleaning up old NEC flow data...');
+
+        // Get all flow instance IDs for NEC flow
+        const oldNecInstances = await client.query(
+            'SELECT id FROM flow_instances WHERE flow_id = $1',
+            [actualNecFlowId]
+        );
+        const oldNecInstanceIds = oldNecInstances.rows.map(r => r.id);
+
+        if (oldNecInstanceIds.length > 0) {
+            // Delete related records for these instances
+            await client.query('DELETE FROM expected_callbacks WHERE flow_instance_id = ANY($1)', [oldNecInstanceIds]);
+            await client.query('DELETE FROM received_callbacks WHERE matched_to_instance_id = ANY($1)', [oldNecInstanceIds]);
+            await client.query('DELETE FROM step_executions WHERE flow_instance_id = ANY($1)', [oldNecInstanceIds]);
+            await client.query('DELETE FROM tsq_requests WHERE flow_instance_id = ANY($1)', [oldNecInstanceIds]);
+            await client.query('DELETE FROM reversal_requests WHERE flow_instance_id = ANY($1)', [oldNecInstanceIds]);
+            await client.query('DELETE FROM process_logs WHERE flow_instance_id = ANY($1)', [oldNecInstanceIds]);
+            await client.query('DELETE FROM flow_instances WHERE id = ANY($1)', [oldNecInstanceIds]);
+            console.log(`    Removed ${oldNecInstanceIds.length} old NEC flow instances and related data`);
+        }
+
+        // Now safe to delete steps and transitions
         await client.query('DELETE FROM step_transitions WHERE flow_id = $1', [actualNecFlowId]);
         await client.query('DELETE FROM flow_steps WHERE flow_id = $1', [actualNecFlowId]);
+        console.log('  Cleaned up old NEC flow steps');
 
         // NEC Flow Steps (with condition check after API call)
         const necStepsData = [
