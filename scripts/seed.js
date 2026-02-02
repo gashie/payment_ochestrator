@@ -196,13 +196,21 @@ const seed = async () => {
         await client.query(
             `INSERT INTO flows (id, flow_code, flow_name, event_type_id, description, is_active, version)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (flow_code) DO NOTHING`,
+             ON CONFLICT (flow_code) DO UPDATE SET
+                flow_name = EXCLUDED.flow_name,
+                description = EXCLUDED.description,
+                is_active = EXCLUDED.is_active`,
             [ftFlowId, 'FT_FLOW', 'FT Flow', ftEventType.id, 'Funds Transfer Flow - FTD → Callback → FTC → Callback → Complete (Reversal on FTC fail)', true, 1]
         );
 
         // Fetch actual FT flow ID from database
         const ftFlowResult = await client.query("SELECT id FROM flows WHERE flow_code = 'FT_FLOW'");
         const actualFtFlowId = ftFlowResult.rows[0]?.id || ftFlowId;
+
+        // Clean up old FT flow steps and transitions (in case of re-seeding)
+        await client.query('DELETE FROM step_transitions WHERE flow_id = $1', [actualFtFlowId]);
+        await client.query('DELETE FROM flow_steps WHERE flow_id = $1', [actualFtFlowId]);
+        console.log('  Cleaned up old FT flow steps');
 
         // FTD Request Mapping
         const ftdRequestMapping = [
