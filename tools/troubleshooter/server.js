@@ -837,33 +837,124 @@ app.get('/api/configs/:key', async (req, res) => {
     }
 });
 
-// Update config value
-app.put('/api/configs/:key', async (req, res) => {
+// Create new configuration
+app.post('/api/configs', async (req, res) => {
     try {
-        const { key } = req.params;
-        const { value, description } = req.body;
+        const { config_key, config_value, config_type, description } = req.body;
+
+        if (!config_key || !config_value) {
+            return res.json({ success: false, error: 'config_key and config_value are required' });
+        }
+
+        const result = await pool.query(`
+            INSERT INTO system_configurations (config_key, config_value, config_type, description)
+            VALUES ($1, $2, $3, $4)
+            RETURNING *
+        `, [config_key, config_value, config_type || 'STRING', description || '']);
+
+        res.json({ success: true, data: result.rows[0] });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
+// Update config by ID
+app.put('/api/configs/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { config_value, config_type, description } = req.body;
 
         const result = await pool.query(`
             UPDATE system_configurations
             SET config_value = COALESCE($2, config_value),
-                description = COALESCE($3, description),
+                config_type = COALESCE($3, config_type),
+                description = COALESCE($4, description),
                 updated_at = NOW()
-            WHERE config_key = $1
+            WHERE id = $1
             RETURNING *
-        `, [key, value, description]);
+        `, [id, config_value, config_type, description]);
 
         if (result.rows.length === 0) {
-            // Create if doesn't exist
-            const insertResult = await pool.query(`
-                INSERT INTO system_configurations (config_key, config_value, description)
-                VALUES ($1, $2, $3)
-                RETURNING *
-            `, [key, value, description || '']);
-
-            return res.json({ success: true, data: insertResult.rows[0], created: true });
+            return res.json({ success: false, error: 'Configuration not found' });
         }
 
         res.json({ success: true, data: result.rows[0] });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
+// Delete configuration
+app.delete('/api/configs/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await pool.query(
+            'DELETE FROM system_configurations WHERE id = $1 RETURNING id',
+            [id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.json({ success: false, error: 'Configuration not found' });
+        }
+
+        res.json({ success: true, message: 'Configuration deleted' });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
+// ============================================
+// PROCESS LOGS ENDPOINTS
+// ============================================
+
+// Get process logs
+app.get('/api/logs', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 100;
+        const logType = req.query.log_type;
+
+        let query = `
+            SELECT
+                pl.id,
+                pl.flow_instance_id,
+                pl.log_type,
+                pl.message,
+                pl.details,
+                pl.created_at,
+                fi.session_id,
+                fi.tracking_number
+            FROM process_logs pl
+            LEFT JOIN flow_instances fi ON pl.flow_instance_id = fi.id
+        `;
+
+        const params = [];
+        if (logType) {
+            query += ' WHERE pl.log_type = $1';
+            params.push(logType);
+        }
+
+        query += ' ORDER BY pl.created_at DESC LIMIT $' + (params.length + 1);
+        params.push(limit);
+
+        const result = await pool.query(query, params);
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
+// Get logs for specific flow instance
+app.get('/api/logs/flow/:instanceId', async (req, res) => {
+    try {
+        const { instanceId } = req.params;
+        const result = await pool.query(`
+            SELECT id, log_type, message, details, created_at
+            FROM process_logs
+            WHERE flow_instance_id = $1
+            ORDER BY created_at ASC
+        `, [instanceId]);
+
+        res.json({ success: true, data: result.rows });
     } catch (err) {
         res.json({ success: false, error: err.message });
     }
@@ -877,6 +968,11 @@ app.get('/api/health', async (req, res) => {
     } catch (err) {
         res.json({ success: false, status: 'unhealthy', database: 'disconnected', error: err.message });
     }
+});
+
+// Catch-all for unknown API routes - return JSON error, not HTML
+app.all('/api/*', (req, res) => {
+    res.status(404).json({ success: false, error: `API endpoint not found: ${req.method} ${req.path}` });
 });
 
 // Start server

@@ -150,43 +150,70 @@ const seed = async () => {
             { source: null, target: 'dateTime', transform: 'formatDateTime' }
         ];
 
-        // NEC Flow Steps
-        const necSteps = [
-            { id: uuidv4(), flow_id: actualNecFlowId, step_code: 'NEC_START', step_order: 1, step_type: 'START', step_name: 'Start', config: JSON.stringify({}), input_mapping: null },
-            { id: uuidv4(), flow_id: actualNecFlowId, step_code: 'NEC_TRANSFORM_REQ', step_order: 2, step_type: 'TRANSFORM', step_name: 'Transform Request', config: JSON.stringify({ mapping_id: 'nec_request_mapping' }), input_mapping: JSON.stringify(necRequestMapping) },
-            { id: uuidv4(), flow_id: actualNecFlowId, step_code: 'NEC_API_CALL', step_order: 3, step_type: 'API_CALL', step_name: 'Call GIP NEC', config: JSON.stringify({
+        // Clean up old NEC flow steps and transitions (for re-seeding)
+        await client.query('DELETE FROM step_transitions WHERE flow_id = $1', [actualNecFlowId]);
+        await client.query('DELETE FROM flow_steps WHERE flow_id = $1', [actualNecFlowId]);
+
+        // NEC Flow Steps (with condition check after API call)
+        const necStepsData = [
+            { step_code: 'NEC_START', step_order: 1, step_type: 'START', step_name: 'Start', config: {}, input_mapping: null },
+            { step_code: 'NEC_TRANSFORM_REQ', step_order: 2, step_type: 'TRANSFORM', step_name: 'Transform Request', config: { mapping_id: 'nec_request_mapping' }, input_mapping: necRequestMapping },
+            { step_code: 'NEC_API_CALL', step_order: 3, step_type: 'API_CALL', step_name: 'Call GIP NEC', config: {
                 apiId: gipApi.id,
                 pathTemplate: '/nec',
                 method: 'POST',
                 timeout_ms: 30000
-            }), input_mapping: null },
-            { id: uuidv4(), flow_id: actualNecFlowId, step_code: 'NEC_TRANSFORM_RES', step_order: 4, step_type: 'TRANSFORM', step_name: 'Transform Response', config: JSON.stringify({ mapping_id: 'nec_response_mapping' }), input_mapping: null },
-            { id: uuidv4(), flow_id: actualNecFlowId, step_code: 'NEC_END', step_order: 5, step_type: 'END', step_name: 'End', config: JSON.stringify({}), input_mapping: null }
+            }, input_mapping: null },
+            { step_code: 'NEC_CHECK', step_order: 4, step_type: 'CONDITION', step_name: 'Check NEC Result', config: { condition: "actionCode === '000'" }, input_mapping: null },
+            { step_code: 'NEC_TRANSFORM_RES', step_order: 5, step_type: 'TRANSFORM', step_name: 'Transform Response', config: { mapping_id: 'nec_response_mapping' }, input_mapping: null },
+            { step_code: 'NEC_END_SUCCESS', step_order: 6, step_type: 'END', step_name: 'End Success', config: { status: 'SUCCESS' }, input_mapping: null },
+            { step_code: 'NEC_END_FAIL', step_order: 7, step_type: 'END', step_name: 'End Failed', config: { status: 'FAILED', reason: 'NEC_FAILED' }, input_mapping: null }
         ];
 
-        for (const step of necSteps) {
+        for (const step of necStepsData) {
             await client.query(
                 `INSERT INTO flow_steps (id, flow_id, step_code, step_order, step_type, step_name, config, input_mapping)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 ON CONFLICT (flow_id, step_code) DO UPDATE SET config = $7, input_mapping = $8`,
-                [step.id, step.flow_id, step.step_code, step.step_order, step.step_type, step.step_name, step.config, step.input_mapping]
+                 ON CONFLICT (flow_id, step_code) DO UPDATE SET config = $7, input_mapping = $8, step_order = $4`,
+                [uuidv4(), actualNecFlowId, step.step_code, step.step_order, step.step_type, step.step_name,
+                 JSON.stringify(step.config), step.input_mapping ? JSON.stringify(step.input_mapping) : null]
             );
         }
 
-        // Fetch actual step IDs
-        const necStepsResult = await client.query("SELECT id, step_code FROM flow_steps WHERE flow_id = $1 ORDER BY step_order", [actualNecFlowId]);
+        // Fetch actual NEC step IDs
+        const necStepsResult = await client.query("SELECT id, step_code, step_order FROM flow_steps WHERE flow_id = $1 ORDER BY step_order", [actualNecFlowId]);
         const actualNecSteps = necStepsResult.rows;
 
-        // NEC Flow Transitions
-        for (let i = 0; i < actualNecSteps.length - 1; i++) {
-            await client.query(
-                `INSERT INTO step_transitions (id, flow_id, from_step_id, to_step_id, transition_type, conditions)
-                 VALUES ($1, $2, $3, $4, $5, $6)
-                 ON CONFLICT DO NOTHING`,
-                [uuidv4(), actualNecFlowId, actualNecSteps[i].id, actualNecSteps[i + 1].id, 'DEFAULT', JSON.stringify([])]
-            );
+        // Build step lookup by step_code
+        const necStepLookup = {};
+        actualNecSteps.forEach(s => { necStepLookup[s.step_code] = s; });
+
+        // NEC Flow Transitions (with condition checking)
+        // START → TRANSFORM_REQ → API_CALL → CHECK
+        // CHECK (success) → TRANSFORM_RES → END_SUCCESS
+        // CHECK (fail) → END_FAIL
+        const necTransitions = [
+            { from: 'NEC_START', to: 'NEC_TRANSFORM_REQ', type: 'DEFAULT' },
+            { from: 'NEC_TRANSFORM_REQ', to: 'NEC_API_CALL', type: 'DEFAULT' },
+            { from: 'NEC_API_CALL', to: 'NEC_CHECK', type: 'DEFAULT' },
+            { from: 'NEC_CHECK', to: 'NEC_TRANSFORM_RES', type: 'CONDITION', condition: 'SUCCESS' },
+            { from: 'NEC_CHECK', to: 'NEC_END_FAIL', type: 'CONDITION', condition: 'FAILED' },
+            { from: 'NEC_TRANSFORM_RES', to: 'NEC_END_SUCCESS', type: 'DEFAULT' }
+        ];
+
+        for (const trans of necTransitions) {
+            const fromStep = necStepLookup[trans.from];
+            const toStep = necStepLookup[trans.to];
+            if (fromStep && toStep) {
+                await client.query(
+                    `INSERT INTO step_transitions (id, flow_id, from_step_id, to_step_id, transition_type, conditions)
+                     VALUES ($1, $2, $3, $4, $5, $6)
+                     ON CONFLICT DO NOTHING`,
+                    [uuidv4(), actualNecFlowId, fromStep.id, toStep.id, trans.type, JSON.stringify([{ condition: trans.condition || null }])]
+                );
+            }
         }
-        console.log('  ✅ Created NEC Flow with 5 steps');
+        console.log('  ✅ Created NEC Flow with 7 steps (with condition check after API call)');
 
         // 6. Create FT Flow (Funds Transfer - Simplified: FTD → FTC → Callback)
         console.log('Creating FT Flow...');
@@ -533,7 +560,9 @@ const seed = async () => {
         console.log('   Password: Admin@123');
 
         console.log('\n📊 Flows Created:');
-        console.log('   • NEC Flow (Synchronous): Start → Transform → API Call → Transform → End');
+        console.log('   • NEC Flow (Synchronous): Start → Transform → API Call → Check →');
+        console.log('                             Success: Transform Response → End Success');
+        console.log('                             Failed:  End Failed (actionCode !== 000)');
         console.log('   • FT Flow (Asynchronous): Start → FTD Transform → FTD Call → FTD Callback →');
         console.log('                             FTD Check → FTC Transform → FTC Call → FTC Callback →');
         console.log('                             FTC Check → Success OR Reversal');

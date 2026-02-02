@@ -1682,6 +1682,12 @@
                 <div class="sidebar-item" data-view="jobs" onclick="showView('jobs')">
                     <span class="sidebar-icon">🔄</span><span>Job Queue</span>
                 </div>
+                <div class="sidebar-item" data-view="configs" onclick="showView('configs')">
+                    <span class="sidebar-icon">🔧</span><span>System Config</span>
+                </div>
+                <div class="sidebar-item" data-view="logs" onclick="showView('logs')">
+                    <span class="sidebar-icon">📜</span><span>Process Logs</span>
+                </div>
                 <div class="sidebar-item" data-view="guide" onclick="showView('guide')">
                     <span class="sidebar-icon">📖</span><span>Guide</span>
                 </div>
@@ -1742,7 +1748,7 @@
                 dashboard: loadDashboard, recent: loadRecentFlows, stuck: loadStuckFlows,
                 failed: loadFailedFlows, timedout: loadTimedOutCallbacks, spam: loadCallbackSpam,
                 jobs: loadJobQueue, guide: showGuide, setup: showFlowSetup, events: showEventTypes,
-                builder: showVisualBuilder
+                builder: showVisualBuilder, configs: showSystemConfigs, logs: showProcessLogs
             };
             if (handlers[view]) handlers[view]();
         }
@@ -3390,6 +3396,333 @@
                     </table>
                 </div>
             `);
+        }
+
+        // ============================================
+        // SYSTEM CONFIGURATION
+        // ============================================
+        let allConfigs = [];
+
+        async function showSystemConfigs() {
+            setTitle('System Configuration');
+            setActions('<button class="btn btn-primary" onclick="showCreateConfigModal()">+ Add Config</button>');
+            setLoading();
+
+            try {
+                const res = await fetch(`${API}/configs`);
+                const data = await res.json();
+                allConfigs = data.success ? (data.data || []) : [];
+
+                if (allConfigs.length === 0) {
+                    setContent(`
+                        <div class="empty-state">
+                            <div class="empty-icon">🔧</div>
+                            <h3>No Configurations</h3>
+                            <p>Add system configurations to manage settings like callback URLs, timeouts, etc.</p>
+                            <button class="btn btn-primary" onclick="showCreateConfigModal()">Add First Config</button>
+                        </div>
+                    `);
+                    return;
+                }
+
+                let html = `
+                    <div class="info-card" style="margin-bottom:20px;padding:16px">
+                        <div class="info-card-title" style="margin-bottom:12px">📋 Important Configurations</div>
+                        <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">
+                            These settings control orchestrator behavior. Changes take effect immediately.
+                        </p>
+                    </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Key</th>
+                                <th>Value</th>
+                                <th>Type</th>
+                                <th>Description</th>
+                                <th style="width:120px">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                for (const cfg of allConfigs) {
+                    const isUrl = cfg.config_key.includes('URL');
+                    const displayValue = isUrl
+                        ? `<a href="${cfg.config_value}" target="_blank" style="color:var(--accent-blue)">${cfg.config_value}</a>`
+                        : `<code style="background:var(--bg-primary);padding:2px 6px;border-radius:4px">${cfg.config_value}</code>`;
+
+                    html += `
+                        <tr>
+                            <td><strong>${cfg.config_key}</strong></td>
+                            <td>${displayValue}</td>
+                            <td><span class="status-badge" style="background:var(--accent-purple)">${cfg.config_type || 'STRING'}</span></td>
+                            <td style="color:var(--text-secondary);font-size:12px">${cfg.description || '-'}</td>
+                            <td>
+                                <button class="btn" style="padding:4px 8px;font-size:11px" onclick="showEditConfigModal('${cfg.id}')">Edit</button>
+                                <button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="deleteConfig('${cfg.id}')">Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                }
+
+                html += '</tbody></table>';
+                setContent(html);
+            } catch (err) {
+                setContent(`<div class="empty-state"><div class="empty-icon">❌</div><h3>Error</h3><p>${err.message}</p></div>`);
+            }
+        }
+
+        function showCreateConfigModal() {
+            document.getElementById('modalTitle').textContent = 'Add Configuration';
+            document.getElementById('modalBody').innerHTML = `
+                <div style="display:flex;flex-direction:column;gap:16px">
+                    <div>
+                        <label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:12px">Config Key *</label>
+                        <input type="text" id="configKey" placeholder="e.g. ORCHESTRATOR_BASE_URL" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:6px;color:var(--text-primary)">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:12px">Config Value *</label>
+                        <input type="text" id="configValue" placeholder="e.g. http://localhost:3002" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:6px;color:var(--text-primary)">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:12px">Type</label>
+                        <select id="configType" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:6px;color:var(--text-primary)">
+                            <option value="STRING">STRING</option>
+                            <option value="NUMBER">NUMBER</option>
+                            <option value="BOOLEAN">BOOLEAN</option>
+                            <option value="JSON">JSON</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:12px">Description</label>
+                        <input type="text" id="configDesc" placeholder="What this config does..." style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:6px;color:var(--text-primary)">
+                    </div>
+                    <button class="btn btn-primary" onclick="createConfig()">Create Configuration</button>
+                </div>
+            `;
+            document.getElementById('stepModal').style.display = 'flex';
+        }
+
+        async function createConfig() {
+            const key = document.getElementById('configKey').value.trim();
+            const value = document.getElementById('configValue').value.trim();
+            const type = document.getElementById('configType').value;
+            const desc = document.getElementById('configDesc').value.trim();
+
+            if (!key || !value) { alert('Key and Value are required'); return; }
+
+            try {
+                const res = await fetch(`${API}/configs`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ config_key: key, config_value: value, config_type: type, description: desc })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    closeModal();
+                    showSystemConfigs();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        function showEditConfigModal(configId) {
+            const cfg = allConfigs.find(c => c.id === configId);
+            if (!cfg) return;
+
+            document.getElementById('modalTitle').textContent = 'Edit Configuration';
+            document.getElementById('modalBody').innerHTML = `
+                <div style="display:flex;flex-direction:column;gap:16px">
+                    <div>
+                        <label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:12px">Config Key</label>
+                        <input type="text" id="editConfigKey" value="${cfg.config_key}" disabled style="width:100%;padding:10px;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:6px;color:var(--text-muted)">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:12px">Config Value *</label>
+                        <input type="text" id="editConfigValue" value="${cfg.config_value}" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:6px;color:var(--text-primary)">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:12px">Type</label>
+                        <select id="editConfigType" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:6px;color:var(--text-primary)">
+                            <option value="STRING" ${cfg.config_type === 'STRING' ? 'selected' : ''}>STRING</option>
+                            <option value="NUMBER" ${cfg.config_type === 'NUMBER' ? 'selected' : ''}>NUMBER</option>
+                            <option value="BOOLEAN" ${cfg.config_type === 'BOOLEAN' ? 'selected' : ''}>BOOLEAN</option>
+                            <option value="JSON" ${cfg.config_type === 'JSON' ? 'selected' : ''}>JSON</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:12px">Description</label>
+                        <input type="text" id="editConfigDesc" value="${cfg.description || ''}" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:6px;color:var(--text-primary)">
+                    </div>
+                    <button class="btn btn-primary" onclick="updateConfig('${configId}')">Update Configuration</button>
+                </div>
+            `;
+            document.getElementById('stepModal').style.display = 'flex';
+        }
+
+        async function updateConfig(configId) {
+            const value = document.getElementById('editConfigValue').value.trim();
+            const type = document.getElementById('editConfigType').value;
+            const desc = document.getElementById('editConfigDesc').value.trim();
+
+            if (!value) { alert('Value is required'); return; }
+
+            try {
+                const res = await fetch(`${API}/configs/${configId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ config_value: value, config_type: type, description: desc })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    closeModal();
+                    showSystemConfigs();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function deleteConfig(configId) {
+            if (!confirm('Delete this configuration?')) return;
+
+            try {
+                const res = await fetch(`${API}/configs/${configId}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (data.success) {
+                    showSystemConfigs();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        // ============================================
+        // PROCESS LOGS
+        // ============================================
+        async function showProcessLogs() {
+            setTitle('Process Logs');
+            setActions(`
+                <select id="logTypeFilter" onchange="filterLogs()" style="padding:8px 12px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;color:var(--text-primary)">
+                    <option value="">All Types</option>
+                    <option value="INSTANCE_CREATED">Instance Created</option>
+                    <option value="INSTANCE_COMPLETED">Instance Completed</option>
+                    <option value="INSTANCE_FAILED">Instance Failed</option>
+                    <option value="WAITING_CALLBACK">Waiting Callback</option>
+                    <option value="CALLBACK_RECEIVED">Callback Received</option>
+                    <option value="CALLBACK_TIMEOUT">Callback Timeout</option>
+                    <option value="BFS_CALLBACK_SENT">BFS Callback Sent</option>
+                    <option value="BFS_CALLBACK_FAILED">BFS Callback Failed</option>
+                </select>
+                <button class="btn" onclick="showProcessLogs()">Refresh</button>
+            `);
+            setLoading();
+
+            try {
+                const res = await fetch(`${API}/logs?limit=200`);
+                const data = await res.json();
+                const logs = data.success ? (data.data || []) : [];
+
+                if (logs.length === 0) {
+                    setContent(`
+                        <div class="empty-state">
+                            <div class="empty-icon">📜</div>
+                            <h3>No Logs Found</h3>
+                            <p>Process logs will appear here as flows execute.</p>
+                        </div>
+                    `);
+                    return;
+                }
+
+                window.allLogs = logs;
+                renderLogs(logs);
+            } catch (err) {
+                setContent(`<div class="empty-state"><div class="empty-icon">❌</div><h3>Error</h3><p>${err.message}</p></div>`);
+            }
+        }
+
+        function filterLogs() {
+            const filter = document.getElementById('logTypeFilter').value;
+            const filtered = filter ? window.allLogs.filter(l => l.log_type === filter) : window.allLogs;
+            renderLogs(filtered);
+        }
+
+        function renderLogs(logs) {
+            const getLogTypeColor = (type) => {
+                const colors = {
+                    'INSTANCE_CREATED': 'var(--accent-blue)',
+                    'INSTANCE_COMPLETED': 'var(--accent-green)',
+                    'INSTANCE_FAILED': 'var(--accent-red)',
+                    'WAITING_CALLBACK': 'var(--accent-yellow)',
+                    'CALLBACK_RECEIVED': 'var(--accent-cyan)',
+                    'CALLBACK_TIMEOUT': 'var(--accent-orange)',
+                    'BFS_CALLBACK_SENT': 'var(--accent-purple)',
+                    'BFS_CALLBACK_FAILED': 'var(--accent-red)'
+                };
+                return colors[type] || 'var(--text-muted)';
+            };
+
+            let html = `
+                <div style="margin-bottom:16px;color:var(--text-secondary);font-size:13px">
+                    Showing ${logs.length} log entries
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="width:160px">Timestamp</th>
+                            <th style="width:140px">Log Type</th>
+                            <th style="width:280px">Flow Instance</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            for (const log of logs) {
+                const details = safeJSON(log.details);
+                const detailStr = Object.keys(details).length > 0
+                    ? `<code style="font-size:11px;background:var(--bg-primary);padding:2px 6px;border-radius:4px;word-break:break-all">${JSON.stringify(details).substring(0, 150)}${JSON.stringify(details).length > 150 ? '...' : ''}</code>`
+                    : '<span style="color:var(--text-muted)">-</span>';
+
+                html += `
+                    <tr>
+                        <td style="font-size:12px;color:var(--text-secondary)">${new Date(log.created_at).toLocaleString()}</td>
+                        <td><span class="status-badge" style="background:${getLogTypeColor(log.log_type)}">${log.log_type}</span></td>
+                        <td>
+                            ${log.flow_instance_id
+                                ? `<span class="clickable" onclick="analyzeFlowById('${log.flow_instance_id}')" style="font-size:11px">${log.flow_instance_id.substring(0, 8)}...</span>`
+                                : '<span style="color:var(--text-muted)">-</span>'
+                            }
+                        </td>
+                        <td>${detailStr}</td>
+                    </tr>
+                `;
+            }
+
+            html += '</tbody></table>';
+            setContent(html);
+        }
+
+        async function analyzeFlowById(flowId) {
+            try {
+                const res = await fetch(`${API}/flow/${flowId}`);
+                const data = await res.json();
+                if (data.success) {
+                    currentFlow = data.data;
+                    await loadFlowAnalysis(data.data);
+                } else {
+                    alert('Flow not found');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
         }
 
         // Actions

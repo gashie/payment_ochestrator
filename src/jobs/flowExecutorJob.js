@@ -68,43 +68,45 @@ const processFlowExecutionJobs = async () => {
                 });
                 
                 // Update job as failed or retry
-                const retryCount = (job.retry_count || 0) + 1;
-                const maxRetries = 3;
-                
-                if (retryCount < maxRetries) {
+                const attemptNumber = (job.attempt_number || 0) + 1;
+                const maxAttempts = job.max_attempts || 3;
+
+                if (attemptNumber < maxAttempts) {
                     await jobQueueModel.update(job.id, {
                         status: 'PENDING',
-                        retry_count: retryCount,
+                        attempt_number: attemptNumber,
                         error_message: error.message,
                         locked_at: null,
                         locked_by: null,
-                        scheduled_at: new Date(Date.now() + retryCount * 30000) // Exponential backoff
+                        next_retry_at: new Date(Date.now() + attemptNumber * 30000) // Exponential backoff
                     });
-                    
+
                     logger.flow('Execution scheduled for retry', {
                         jobId: job.id,
-                        retryCount,
-                        nextRetryIn: `${retryCount * 30}s`
+                        attemptNumber,
+                        nextRetryIn: `${attemptNumber * 30}s`
                     });
                 } else {
                     await jobQueueModel.update(job.id, {
                         status: 'FAILED',
-                        retry_count: retryCount,
+                        attempt_number: attemptNumber,
                         error_message: error.message,
-                        failed_at: new Date()
+                        completed_at: new Date()
                     });
                     
                     // Also update flow instance as failed
-                    const jobData = JSON.parse(job.job_data);
-                    await flowInstancesModel.update(jobData.flowInstanceId, {
-                        status: 'FAILED',
-                        error_message: `Job execution failed after ${maxRetries} retries: ${error.message}`
-                    });
-                    
-                    logger.error('Flow execution max retries exceeded', error, {
+                    const jobData = typeof job.payload === 'string' ? JSON.parse(job.payload) : job.payload;
+                    if (jobData?.flowInstanceId) {
+                        await flowInstancesModel.update(jobData.flowInstanceId, {
+                            status: 'FAILED',
+                            last_error: `Job execution failed after ${maxAttempts} attempts: ${error.message}`
+                        });
+                    }
+
+                    logger.error('Flow execution max attempts exceeded', error, {
                         jobId: job.id,
-                        maxRetries,
-                        flowInstanceId: jobData.flowInstanceId
+                        maxAttempts,
+                        flowInstanceId: jobData?.flowInstanceId
                     });
                 }
             }
