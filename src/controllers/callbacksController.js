@@ -357,28 +357,45 @@ const getUnmatchedCallbacks = async (req, res) => {
 /**
  * Receive callback for a specific flow instance and step
  * This endpoint is used when orchestrator sends callbackUrl to GIP
+ * Note: stepId in URL may be from API_CALL step, but we need to find the CALLBACK step waiting
  */
 const receiveCallbackForStep = async (req, res) => {
     try {
-        const { instanceId, stepId } = req.params;
+        const { instanceId, stepId: urlStepId } = req.params;
         const payload = req.body;
 
-        logger.info('Received callback for step', {
+        logger.info('Received callback for instance', {
             instanceId,
-            stepId,
+            urlStepId,
             sessionId: payload.sessionId,
             actionCode: payload.actionCode
         });
 
-        // Process the callback for this specific step
-        const result = await callbackService.processCallbackForStep(instanceId, stepId, payload);
+        // Find the PENDING expected callback for this instance
+        // This should be the CALLBACK step that's waiting, not the API_CALL step that sent the request
+        const pendingCallback = await callbackService.findPendingCallbackForInstance(instanceId);
+
+        let result;
+        if (pendingCallback) {
+            // Use the pending callback's step execution ID (from CALLBACK step)
+            logger.info('Found pending callback, processing for waiting step', {
+                instanceId,
+                pendingStepId: pendingCallback.step_execution_id,
+                originalUrlStepId: urlStepId
+            });
+            result = await callbackService.processCallbackForStep(instanceId, pendingCallback.step_execution_id, payload);
+        } else {
+            // Fallback: use the stepId from URL (backwards compatibility)
+            logger.warn('No pending callback found, using URL stepId', { instanceId, urlStepId });
+            result = await callbackService.processCallbackForStep(instanceId, urlStepId, payload);
+        }
 
         res.json({
             success: true,
             data: {
                 message: 'Callback received and processed',
                 instanceId,
-                stepId,
+                stepId: pendingCallback?.step_execution_id || urlStepId,
                 matched: result.matched,
                 continued: result.continued
             }

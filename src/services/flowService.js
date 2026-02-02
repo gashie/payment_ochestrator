@@ -151,15 +151,47 @@ const getNextStep = async (flowDefinition, currentStepId, executionData) => {
         throw new Error(`Step not found in graph: ${currentStepId}`);
     }
 
+    const currentStep = currentNode.step;
+    logger.debug('Getting next step', {
+        currentStepId,
+        currentStepCode: currentStep.step_code,
+        currentStepType: currentStep.step_type,
+        actionCode: executionData.actionCode
+    });
+
     // First try explicit transitions
     const outgoingTransitions = currentNode.outgoing
         .sort((a, b) => a.priority - b.priority);
 
+    logger.debug('Evaluating transitions', {
+        currentStepCode: currentStep.step_code,
+        outgoingCount: outgoingTransitions.length,
+        transitions: outgoingTransitions.map(t => ({
+            toStepId: t.to_step_id,
+            type: t.transition_type,
+            conditions: t.conditions
+        }))
+    });
+
     for (const transition of outgoingTransitions) {
         // Evaluate condition
-        if (evaluateTransitionCondition(transition, executionData)) {
+        const conditionResult = evaluateTransitionCondition(transition, executionData);
+        logger.debug('Transition condition evaluated', {
+            fromStep: currentStep.step_code,
+            toStepId: transition.to_step_id,
+            transitionType: transition.transition_type,
+            conditions: transition.conditions,
+            result: conditionResult
+        });
+
+        if (conditionResult) {
             const nextStepNode = stepGraph[transition.to_step_id];
             if (nextStepNode) {
+                logger.info('Next step selected via transition', {
+                    fromStep: currentStep.step_code,
+                    toStep: nextStepNode.step.step_code,
+                    transitionType: transition.transition_type
+                });
                 return nextStepNode.step;
             }
         }
@@ -224,24 +256,81 @@ const getNextStep = async (flowDefinition, currentStepId, executionData) => {
 
 /**
  * Evaluate transition condition
+ * Supports both:
+ * - condition_expression: Complex JSON conditions (e.g., { actionCode: { $eq: '000' } })
+ * - conditions: Simple condition array from seed (e.g., [{ condition: 'SUCCESS' }])
  */
 const evaluateTransitionCondition = (transition, data) => {
-    if (!transition.condition_expression) {
-        return true; // No condition means always true
+    // First check condition_expression (complex conditions)
+    if (transition.condition_expression) {
+        try {
+            const condition = safeJsonParse(transition.condition_expression);
+            if (condition) {
+                return evaluateConditionObject(condition, data);
+            }
+        } catch (error) {
+            logger.error('Failed to evaluate condition_expression', {
+                transitionId: transition.id,
+                error: error.message
+            });
+            return false;
+        }
     }
 
-    try {
-        const condition = safeJsonParse(transition.condition_expression);
-        if (!condition) return true;
+    // Check conditions column (simple conditions from seed)
+    if (transition.conditions) {
+        try {
+            const conditions = safeJsonParse(transition.conditions);
+            if (Array.isArray(conditions) && conditions.length > 0) {
+                const conditionObj = conditions[0];
+                const conditionType = conditionObj?.condition;
 
-        return evaluateConditionObject(condition, data);
-    } catch (error) {
-        logger.error('Failed to evaluate transition condition', { 
-            transitionId: transition.id, 
-            error: error.message 
-        });
-        return false;
+                if (conditionType) {
+                    // Get the actionCode from callback response
+                    const actionCode = data.actionCode || data.callbackResponse?.actionCode;
+
+                    logger.debug('Evaluating transition condition', {
+                        transitionId: transition.id,
+                        conditionType,
+                        actionCode,
+                        transitionType: transition.transition_type
+                    });
+
+                    // SUCCESS means actionCode is '000' (successful transaction)
+                    if (conditionType === 'SUCCESS') {
+                        const isSuccess = actionCode === '000';
+                        logger.debug('SUCCESS condition result', { actionCode, isSuccess });
+                        return isSuccess;
+                    }
+
+                    // FAILED means actionCode is NOT '000'
+                    if (conditionType === 'FAILED') {
+                        const isFailed = actionCode !== '000';
+                        logger.debug('FAILED condition result', { actionCode, isFailed });
+                        return isFailed;
+                    }
+
+                    // For other condition types, check if the value matches
+                    logger.warn('Unknown condition type', { conditionType, transitionId: transition.id });
+                    return false;
+                }
+            }
+        } catch (error) {
+            logger.error('Failed to evaluate conditions', {
+                transitionId: transition.id,
+                error: error.message
+            });
+            return false;
+        }
     }
+
+    // DEFAULT transition type with no conditions - always true
+    if (transition.transition_type === 'DEFAULT') {
+        return true;
+    }
+
+    // No condition means always true for backwards compatibility
+    return true;
 };
 
 /**

@@ -388,6 +388,17 @@ const retryUnmatchedCallbacks = async () => {
     return matchedCount;
 };
 
+/**
+ * Find the pending expected callback for a flow instance
+ * Used to find the CALLBACK step that's waiting, even when callback URL points to API_CALL step
+ */
+const findPendingCallbackForInstance = async (instanceId) => {
+    return expectedCallbacksModel.findOne({
+        flow_instance_id: instanceId,
+        status: 'PENDING'
+    });
+};
+
 module.exports = {
     processIncomingCallback,
     processCallbackForStep,
@@ -395,5 +406,6 @@ module.exports = {
     checkTimedOutCallbacks,
     getCallbackStats,
     listPendingCallbacks,
-    retryUnmatchedCallbacks
+    retryUnmatchedCallbacks,
+    findPendingCallbackForInstance
 };

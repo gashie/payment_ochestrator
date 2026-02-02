@@ -559,27 +559,9 @@ const executeApiCallStep = async (instance, step, payload, stepExecution) => {
             api_response_time_ms: responseTime
         });
 
-        // Check if callback is expected
-        if (includeCallback) {
-            // Register expected callback
-            await expectedCallbacksModel.create({
-                flow_instance_id: instance.id,
-                step_execution_id: stepExecution.id,
-                session_id: payload.sessionId,
-                tracking_number: payload.trackingNumber,
-                callback_type: config.callbackType || 'API_RESPONSE',
-                status: 'PENDING',
-                match_fields: JSON.stringify(config.expectedCallbackFields || ['actionCode']),
-                expected_by: new Date(Date.now() + (config.callbackTimeout || 300000))
-            });
-
-            return {
-                status: STEP_STATUSES.WAITING,
-                outputPayload,
-                waitForCallback: true,
-                callbackId: stepExecution.id
-            };
-        }
+        // NOTE: If includeCallback is true, the callback URL was added to the request
+        // but we DON'T wait here. The next step should be a CALLBACK step that handles waiting.
+        // This allows the flow to: API_CALL → CALLBACK (waits) → CONDITION (checks result)
 
         // Check if response indicates we need TSQ
         const actionCode = responseData.actionCode;
@@ -797,10 +779,30 @@ const resumeAfterCallback = async (instanceId, stepExecutionId, callbackPayload)
 
     // Get current step and continue
     const currentStep = flowDef.steps.find(s => s.id === stepExecution.step_id);
+
+    logger.info('Resuming flow after callback', {
+        instanceId,
+        currentStepCode: currentStep?.step_code,
+        currentStepType: currentStep?.step_type,
+        actionCode: currentPayload.actionCode
+    });
+
     const nextStep = await flowService.getNextStep(flowDef, currentStep.id, currentPayload);
+
+    logger.info('Next step determined after callback', {
+        instanceId,
+        fromStep: currentStep?.step_code,
+        nextStep: nextStep?.step_code,
+        nextStepType: nextStep?.step_type
+    });
 
     if (!nextStep) {
         // Flow complete
+        logger.info('Flow complete - no next step', {
+            instanceId,
+            finalStepCode: currentStep?.step_code
+        });
+
         await flowInstancesModel.update(instanceId, {
             status: INSTANCE_STATUSES.COMPLETED,
             final_response: JSON.stringify(currentPayload),
@@ -818,6 +820,12 @@ const resumeAfterCallback = async (instanceId, stepExecutionId, callbackPayload)
     const refreshedInstance = await flowInstancesModel.findById(instanceId);
 
     // Continue execution
+    logger.info('Continuing flow execution', {
+        instanceId,
+        nextStepCode: nextStep.step_code,
+        nextStepType: nextStep.step_type
+    });
+
     return executeFromStep(refreshedInstance, flowDef, nextStep, currentPayload);
 };
 
