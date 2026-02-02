@@ -188,7 +188,7 @@ const seed = async () => {
         }
         console.log('  ✅ Created NEC Flow with 5 steps');
 
-        // 6. Create FT Flow (Full Funds Transfer)
+        // 6. Create FT Flow (Funds Transfer - Simplified: FTD → FTC → Callback)
         console.log('Creating FT Flow...');
         const ftEventType = eventTypes.find(e => e.event_code === 'FT');
 
@@ -197,42 +197,67 @@ const seed = async () => {
             `INSERT INTO flows (id, flow_code, flow_name, event_type_id, description, is_active, version)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (flow_code) DO NOTHING`,
-            [ftFlowId, 'FT_FLOW', 'FT Flow', ftEventType.id, 'Full Funds Transfer Flow - NEC → FTD → Callback → FTC → Callback → Complete', true, 1]
+            [ftFlowId, 'FT_FLOW', 'FT Flow', ftEventType.id, 'Funds Transfer Flow - FTD → Callback → FTC → Callback → Complete (Reversal on FTC fail)', true, 1]
         );
 
         // Fetch actual FT flow ID from database
         const ftFlowResult = await client.query("SELECT id FROM flows WHERE flow_code = 'FT_FLOW'");
         const actualFtFlowId = ftFlowResult.rows[0]?.id || ftFlowId;
 
-        // FT Flow Steps
+        // FTD Request Mapping
+        const ftdRequestMapping = [
+            { source: 'srcBankCode', target: 'originBank' },
+            { source: 'destBankCode', target: 'destBank' },
+            { source: 'srcAccountNumber', target: 'accountToDebit' },
+            { source: 'destAccountNumber', target: 'accountToCredit' },
+            { source: 'srcAccountName', target: 'nameToDebit' },
+            { source: 'destAccountName', target: 'nameToCredit' },
+            { source: 'amount', target: 'amount', transform: 'formatAmount' },
+            { source: null, target: 'functionCode', default_value: '241' },
+            { source: 'channelCode', target: 'channelCode', default_value: '100' },
+            { source: 'narration', target: 'narration' },
+            { source: null, target: 'dateTime', transform: 'formatDateTime' }
+        ];
+
+        // FTC Request Mapping (swapped for credit leg)
+        const ftcRequestMapping = [
+            { source: 'srcBankCode', target: 'destBank' },
+            { source: 'destBankCode', target: 'originBank' },
+            { source: 'srcAccountNumber', target: 'accountToCredit' },
+            { source: 'destAccountNumber', target: 'accountToDebit' },
+            { source: 'srcAccountName', target: 'nameToCredit' },
+            { source: 'destAccountName', target: 'nameToDebit' },
+            { source: 'amount', target: 'amount', transform: 'formatAmount' },
+            { source: null, target: 'functionCode', default_value: '240' },
+            { source: 'channelCode', target: 'channelCode', default_value: '100' },
+            { source: 'narration', target: 'narration' },
+            { source: null, target: 'dateTime', transform: 'formatDateTime' }
+        ];
+
+        // FT Flow Steps (Simplified - No NEC)
         const ftStepsData = [
-            { step_code: 'FT_START', step_order: 1, step_type: 'START', step_name: 'Start' },
-            { step_code: 'FT_NEC_SRC_TRANSFORM', step_order: 2, step_type: 'TRANSFORM', step_name: 'Transform NEC Src Request' },
-            { step_code: 'FT_NEC_SRC_CALL', step_order: 3, step_type: 'API_CALL', step_name: 'NEC Source Account' },
-            { step_code: 'FT_NEC_DEST_TRANSFORM', step_order: 4, step_type: 'TRANSFORM', step_name: 'Transform NEC Dest Request' },
-            { step_code: 'FT_NEC_DEST_CALL', step_order: 5, step_type: 'API_CALL', step_name: 'NEC Dest Account' },
-            { step_code: 'FT_FTD_TRANSFORM', step_order: 6, step_type: 'TRANSFORM', step_name: 'Transform FTD Request' },
-            { step_code: 'FT_FTD_CALL', step_order: 7, step_type: 'API_CALL', step_name: 'Send FTD' },
-            { step_code: 'FT_FTD_CALLBACK', step_order: 8, step_type: 'CALLBACK', step_name: 'Wait FTD Callback' },
-            { step_code: 'FT_FTD_CHECK', step_order: 9, step_type: 'CONDITION', step_name: 'Check FTD Result' },
-            { step_code: 'FT_FTC_TRANSFORM', step_order: 10, step_type: 'TRANSFORM', step_name: 'Transform FTC Request' },
-            { step_code: 'FT_FTC_CALL', step_order: 11, step_type: 'API_CALL', step_name: 'Send FTC' },
-            { step_code: 'FT_FTC_CALLBACK', step_order: 12, step_type: 'CALLBACK', step_name: 'Wait FTC Callback' },
-            { step_code: 'FT_FTC_CHECK', step_order: 13, step_type: 'CONDITION', step_name: 'Check FTC Result' },
-            { step_code: 'FT_SUCCESS_CALLBACK', step_order: 14, step_type: 'API_CALL', step_name: 'Send Success Callback' },
-            { step_code: 'FT_END_SUCCESS', step_order: 15, step_type: 'END', step_name: 'End Success' },
-            { step_code: 'FT_FTD_FAIL_CALLBACK', step_order: 16, step_type: 'API_CALL', step_name: 'Send FTD Failure Callback' },
-            { step_code: 'FT_END_FTD_FAIL', step_order: 17, step_type: 'END', step_name: 'End FTD Failed' },
-            { step_code: 'FT_REVERSAL', step_order: 18, step_type: 'TASK', step_name: 'Trigger Reversal' },
-            { step_code: 'FT_END_REVERSAL', step_order: 19, step_type: 'END', step_name: 'End FTC Failed - Reversal Triggered' }
+            { step_code: 'FT_START', step_order: 1, step_type: 'START', step_name: 'Start', config: {}, input_mapping: null },
+            { step_code: 'FT_FTD_TRANSFORM', step_order: 2, step_type: 'TRANSFORM', step_name: 'Transform FTD Request', config: {}, input_mapping: ftdRequestMapping },
+            { step_code: 'FT_FTD_CALL', step_order: 3, step_type: 'API_CALL', step_name: 'Send FTD to GIP', config: { apiId: gipApi.id, pathTemplate: '/ftd', method: 'POST', includeCallback: true }, input_mapping: null },
+            { step_code: 'FT_FTD_CALLBACK', step_order: 4, step_type: 'CALLBACK', step_name: 'Wait FTD Callback', config: { timeout: 300000, callbackType: 'FTD_RESPONSE' }, input_mapping: null },
+            { step_code: 'FT_FTD_CHECK', step_order: 5, step_type: 'CONDITION', step_name: 'Check FTD Result', config: { condition: "actionCode === '000'" }, input_mapping: null },
+            { step_code: 'FT_FTC_TRANSFORM', step_order: 6, step_type: 'TRANSFORM', step_name: 'Transform FTC Request', config: {}, input_mapping: ftcRequestMapping },
+            { step_code: 'FT_FTC_CALL', step_order: 7, step_type: 'API_CALL', step_name: 'Send FTC to GIP', config: { apiId: gipApi.id, pathTemplate: '/ftc', method: 'POST', includeCallback: true }, input_mapping: null },
+            { step_code: 'FT_FTC_CALLBACK', step_order: 8, step_type: 'CALLBACK', step_name: 'Wait FTC Callback', config: { timeout: 300000, callbackType: 'FTC_RESPONSE' }, input_mapping: null },
+            { step_code: 'FT_FTC_CHECK', step_order: 9, step_type: 'CONDITION', step_name: 'Check FTC Result', config: { condition: "actionCode === '000'" }, input_mapping: null },
+            { step_code: 'FT_END_SUCCESS', step_order: 10, step_type: 'END', step_name: 'End Success', config: { status: 'SUCCESS' }, input_mapping: null },
+            { step_code: 'FT_FTD_FAIL_END', step_order: 11, step_type: 'END', step_name: 'End FTD Failed', config: { status: 'FAILED', reason: 'FTD_FAILED' }, input_mapping: null },
+            { step_code: 'FT_REVERSAL', step_order: 12, step_type: 'TASK', step_name: 'Trigger Reversal', config: { taskType: 'REVERSAL', reason: 'FTC_FAILED' }, input_mapping: null },
+            { step_code: 'FT_END_REVERSAL', step_order: 13, step_type: 'END', step_name: 'End - Reversal Triggered', config: { status: 'FAILED', reason: 'FTC_FAILED_REVERSAL_TRIGGERED' }, input_mapping: null }
         ];
 
         for (const step of ftStepsData) {
             await client.query(
-                `INSERT INTO flow_steps (id, flow_id, step_code, step_order, step_type, step_name, config)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-                 ON CONFLICT (flow_id, step_code) DO NOTHING`,
-                [uuidv4(), actualFtFlowId, step.step_code, step.step_order, step.step_type, step.step_name, JSON.stringify({})]
+                `INSERT INTO flow_steps (id, flow_id, step_code, step_order, step_type, step_name, config, input_mapping)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 ON CONFLICT (flow_id, step_code) DO UPDATE SET config = $7, input_mapping = $8, step_order = $4`,
+                [uuidv4(), actualFtFlowId, step.step_code, step.step_order, step.step_type, step.step_name,
+                 JSON.stringify(step.config), step.input_mapping ? JSON.stringify(step.input_mapping) : null]
             );
         }
 
@@ -240,39 +265,44 @@ const seed = async () => {
         const ftStepsResult = await client.query("SELECT id, step_code, step_order FROM flow_steps WHERE flow_id = $1 ORDER BY step_order", [actualFtFlowId]);
         const ftSteps = ftStepsResult.rows;
 
-        // FT Flow Transitions (simplified - main path)
+        // Build step lookup by step_code
+        const ftStepLookup = {};
+        ftSteps.forEach(s => { ftStepLookup[s.step_code] = s; });
+
+        // FT Flow Transitions (Simplified)
+        // START → FTD_TRANSFORM → FTD_CALL → FTD_CALLBACK → FTD_CHECK
+        // FTD_CHECK (success) → FTC_TRANSFORM → FTC_CALL → FTC_CALLBACK → FTC_CHECK
+        // FTD_CHECK (fail) → FTD_FAIL_END
+        // FTC_CHECK (success) → END_SUCCESS
+        // FTC_CHECK (fail) → REVERSAL → END_REVERSAL
         const ftTransitions = [
-            { from: 0, to: 1, type: 'DEFAULT' },
-            { from: 1, to: 2, type: 'DEFAULT' },
-            { from: 2, to: 3, type: 'DEFAULT' },
-            { from: 3, to: 4, type: 'DEFAULT' },
-            { from: 4, to: 5, type: 'DEFAULT' },
-            { from: 5, to: 6, type: 'DEFAULT' },
-            { from: 6, to: 7, type: 'DEFAULT' },
-            { from: 7, to: 8, type: 'DEFAULT' },
-            { from: 8, to: 9, type: 'CONDITION', condition: 'SUCCESS' },
-            { from: 8, to: 15, type: 'CONDITION', condition: 'FAILED' },
-            { from: 9, to: 10, type: 'DEFAULT' },
-            { from: 10, to: 11, type: 'DEFAULT' },
-            { from: 11, to: 12, type: 'DEFAULT' },
-            { from: 12, to: 13, type: 'CONDITION', condition: 'SUCCESS' },
-            { from: 12, to: 17, type: 'CONDITION', condition: 'FAILED' },
-            { from: 13, to: 14, type: 'DEFAULT' },
-            { from: 15, to: 16, type: 'DEFAULT' },
-            { from: 17, to: 18, type: 'DEFAULT' }
+            { from: 'FT_START', to: 'FT_FTD_TRANSFORM', type: 'DEFAULT' },
+            { from: 'FT_FTD_TRANSFORM', to: 'FT_FTD_CALL', type: 'DEFAULT' },
+            { from: 'FT_FTD_CALL', to: 'FT_FTD_CALLBACK', type: 'DEFAULT' },
+            { from: 'FT_FTD_CALLBACK', to: 'FT_FTD_CHECK', type: 'DEFAULT' },
+            { from: 'FT_FTD_CHECK', to: 'FT_FTC_TRANSFORM', type: 'CONDITION', condition: 'SUCCESS' },
+            { from: 'FT_FTD_CHECK', to: 'FT_FTD_FAIL_END', type: 'CONDITION', condition: 'FAILED' },
+            { from: 'FT_FTC_TRANSFORM', to: 'FT_FTC_CALL', type: 'DEFAULT' },
+            { from: 'FT_FTC_CALL', to: 'FT_FTC_CALLBACK', type: 'DEFAULT' },
+            { from: 'FT_FTC_CALLBACK', to: 'FT_FTC_CHECK', type: 'DEFAULT' },
+            { from: 'FT_FTC_CHECK', to: 'FT_END_SUCCESS', type: 'CONDITION', condition: 'SUCCESS' },
+            { from: 'FT_FTC_CHECK', to: 'FT_REVERSAL', type: 'CONDITION', condition: 'FAILED' },
+            { from: 'FT_REVERSAL', to: 'FT_END_REVERSAL', type: 'DEFAULT' }
         ];
 
         for (const trans of ftTransitions) {
-            if (ftSteps[trans.from] && ftSteps[trans.to]) {
+            const fromStep = ftStepLookup[trans.from];
+            const toStep = ftStepLookup[trans.to];
+            if (fromStep && toStep) {
                 await client.query(
                     `INSERT INTO step_transitions (id, flow_id, from_step_id, to_step_id, transition_type, conditions)
                      VALUES ($1, $2, $3, $4, $5, $6)
                      ON CONFLICT DO NOTHING`,
-                    [uuidv4(), actualFtFlowId, ftSteps[trans.from].id, ftSteps[trans.to].id, trans.type, JSON.stringify([{ condition: trans.condition || null }])]
+                    [uuidv4(), actualFtFlowId, fromStep.id, toStep.id, trans.type, JSON.stringify([{ condition: trans.condition || null }])]
                 );
             }
         }
-        console.log(`  ✅ Created FT Flow with ${ftStepsData.length} steps`);
+        console.log(`  ✅ Created FT Flow with ${ftStepsData.length} steps (FTD → FTC → Callback, no NEC)`);
 
         // 7. Create Field Mappings
         console.log('Creating field mappings...');
@@ -451,8 +481,25 @@ const seed = async () => {
 
         console.log('\n📊 Flows Created:');
         console.log('   • NEC Flow (Synchronous): Start → Transform → API Call → Transform → End');
-        console.log('   • FT Flow (Asynchronous): Start → NEC(src) → NEC(dest) → FTD → Callback →');
-        console.log('                             Check → FTC → Callback → Check → Success/Reversal');
+        console.log('   • FT Flow (Asynchronous): Start → FTD Transform → FTD Call → FTD Callback →');
+        console.log('                             FTD Check → FTC Transform → FTC Call → FTC Callback →');
+        console.log('                             FTC Check → Success OR Reversal');
+        console.log('');
+        console.log('   FT Flow Path:');
+        console.log('     ┌─────────┐    ┌─────────────┐    ┌──────────┐    ┌─────────────┐');
+        console.log('     │  START  │ → │ FTD Transform│ → │ FTD Call │ → │ FTD Callback │');
+        console.log('     └─────────┘    └─────────────┘    └──────────┘    └─────────────┘');
+        console.log('                                                              ↓');
+        console.log('     ┌───────────┐   ┌─────────────┐    ┌──────────┐    ┌───────────┐');
+        console.log('     │ FTD Check │ ← ┤ Success?    │ → │ FTC Trans│ → │ FTC Call  │');
+        console.log('     └───────────┘   │ No→FTD Fail │    └──────────┘    └───────────┘');
+        console.log('                     └─────────────┘                          ↓');
+        console.log('     ┌───────────┐   ┌─────────────┐                    ┌───────────┐');
+        console.log('     │ FTC Check │ ← │FTC Callback │ ←──────────────────┤           │');
+        console.log('     └───────────┘   └─────────────┘                    └───────────┘');
+        console.log('           ↓');
+        console.log('     Success → END SUCCESS');
+        console.log('     Failed  → REVERSAL → END REVERSAL');
         console.log('');
 
     } catch (error) {

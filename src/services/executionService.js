@@ -513,12 +513,21 @@ const executeApiCallStep = async (instance, step, payload, stepExecution) => {
         const responseTime = Date.now() - startTime;
         const responseData = response.data;
 
-        // Merge response with payload
+        // Filter out null/undefined values from response before merging
+        const nonNullResponseFields = {};
+        if (typeof responseData === 'object' && responseData !== null) {
+            for (const [key, value] of Object.entries(responseData)) {
+                if (value !== null && value !== undefined) {
+                    nonNullResponseFields[key] = value;
+                }
+            }
+        }
+
+        // Merge response with payload - only non-null response values overwrite
         const outputPayload = {
             ...payload,
             apiResponse: responseData,
-            // Also merge top-level fields from response
-            ...(typeof responseData === 'object' ? responseData : {})
+            ...nonNullResponseFields
         };
 
         // Update step execution with response
