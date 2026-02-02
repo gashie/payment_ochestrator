@@ -207,7 +207,30 @@ const seed = async () => {
         const ftFlowResult = await client.query("SELECT id FROM flows WHERE flow_code = 'FT_FLOW'");
         const actualFtFlowId = ftFlowResult.rows[0]?.id || ftFlowId;
 
-        // Clean up old FT flow steps and transitions (in case of re-seeding)
+        // Clean up old FT flow data (in case of re-seeding)
+        // Must delete in correct order due to foreign key constraints
+        console.log('  Cleaning up old FT flow data...');
+
+        // Get all flow instance IDs for this flow
+        const oldInstances = await client.query(
+            'SELECT id FROM flow_instances WHERE flow_id = $1',
+            [actualFtFlowId]
+        );
+        const oldInstanceIds = oldInstances.rows.map(r => r.id);
+
+        if (oldInstanceIds.length > 0) {
+            // Delete related records for these instances
+            await client.query('DELETE FROM expected_callbacks WHERE flow_instance_id = ANY($1)', [oldInstanceIds]);
+            await client.query('DELETE FROM received_callbacks WHERE matched_to_instance_id = ANY($1)', [oldInstanceIds]);
+            await client.query('DELETE FROM step_executions WHERE flow_instance_id = ANY($1)', [oldInstanceIds]);
+            await client.query('DELETE FROM tsq_requests WHERE flow_instance_id = ANY($1)', [oldInstanceIds]);
+            await client.query('DELETE FROM reversal_requests WHERE flow_instance_id = ANY($1)', [oldInstanceIds]);
+            await client.query('DELETE FROM process_logs WHERE flow_instance_id = ANY($1)', [oldInstanceIds]);
+            await client.query('DELETE FROM flow_instances WHERE id = ANY($1)', [oldInstanceIds]);
+            console.log(`    Removed ${oldInstanceIds.length} old flow instances and related data`);
+        }
+
+        // Now safe to delete steps and transitions
         await client.query('DELETE FROM step_transitions WHERE flow_id = $1', [actualFtFlowId]);
         await client.query('DELETE FROM flow_steps WHERE flow_id = $1', [actualFtFlowId]);
         console.log('  Cleaned up old FT flow steps');
